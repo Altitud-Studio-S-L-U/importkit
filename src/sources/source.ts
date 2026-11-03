@@ -13,6 +13,8 @@ export interface GuardedSource {
   /** The content, counted against `size`. Ends with SOURCE_CHANGED when there are more or fewer bytes. */
   bytes(): AsyncIterable<Uint8Array>;
   assertUnchanged(): Promise<void>;
+  /** Like assertUnchanged(), but a local file is read again and its content compared. */
+  assertContentUnchanged(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -77,16 +79,18 @@ export async function openSource(source: ByteSource, limits: ImportLimits, signa
     await close();
     throw new ImportKitError('LIMIT_EXCEEDED', 'The source exceeds maxSourceBytes.');
   }
+  const assertUnchanged = async (): Promise<void> => {
+    const check = opened.assertUnchanged;
+    if (check !== undefined) await sourceCall('Unable to check the source.', () => check.call(opened));
+  };
   return {
     identity: opened.identity,
     size: opened.size,
     sha256: opened.sha256,
     fileState: opened instanceof OpenedFile ? opened.state : undefined,
     bytes: () => countedBytes(opened, signal),
-    assertUnchanged: async () => {
-      const check = opened.assertUnchanged;
-      if (check !== undefined) await sourceCall('Unable to check the source.', () => check.call(opened));
-    },
+    assertUnchanged,
+    assertContentUnchanged: () => opened instanceof OpenedFile ? opened.assertContentUnchanged() : assertUnchanged(),
     close,
   };
 }

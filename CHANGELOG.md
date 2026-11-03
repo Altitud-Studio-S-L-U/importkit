@@ -28,7 +28,6 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 ### Changed
 
 - The JSON Lines reader finds line breaks with `Buffer#indexOf` and reuses one decoder, which reduces parsing time.
-- `validateFile` reads a file twice instead of three times. After a structural error it reads the rest of the file instead of fingerprinting it again.
 - Benchmark reports leave out the CPU model, the memory size, the kernel version, the host name and local paths.
 
 ### Fixed

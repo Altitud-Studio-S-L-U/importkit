@@ -66,13 +66,15 @@ export class OpenedFile implements OpenedSource {
   /** The file's identity on disk, so the file checkpoint store can refuse to write over it through a hard link. */
   readonly state: BigIntStats;
   readonly #handle: FileHandle;
+  readonly #signal: AbortSignal | undefined;
 
-  constructor(handle: FileHandle, state: BigIntStats, sha256: string) {
+  constructor(handle: FileHandle, state: BigIntStats, sha256: string, signal: AbortSignal | undefined) {
     this.#handle = handle;
     this.state = state;
     this.size = Number(state.size);
     this.sha256 = sha256;
     this.identity = sha256;
+    this.#signal = signal;
   }
 
   bytes(): AsyncIterable<Uint8Array> {
@@ -81,6 +83,15 @@ export class OpenedFile implements OpenedSource {
 
   assertUnchanged(): Promise<void> {
     return assertSameFile(this.#handle, this.state);
+  }
+
+  /**
+   * Reads the file again and compares its content. Some file systems do not expose a rewrite of the same size through
+   * an open handle's timestamps at once, so validation confirms the content rather than trusting the metadata.
+   */
+  async assertContentUnchanged(): Promise<void> {
+    if (await fingerprint(this.#handle, this.size, this.#signal) !== this.sha256) throw sourceChanged();
+    await assertSameFile(this.#handle, this.state);
   }
 
   async close(): Promise<void> {
@@ -114,7 +125,7 @@ export class FileByteSource implements FileSource {
       if (state.size > BigInt(maxBytes)) throw new ImportKitError('LIMIT_EXCEEDED', 'The source exceeds maxSourceBytes.');
       const sha256 = await fingerprint(handle, Number(state.size), signal);
       await assertSameFile(handle, state);
-      return new OpenedFile(handle, state, sha256);
+      return new OpenedFile(handle, state, sha256, signal);
     } catch (error) {
       try { await handle.close(); } catch (closeError) {
         throw new ImportKitError('SOURCE_ERROR', 'Unable to inspect or close the source file.', { cause: new AggregateError([error, closeError]) });

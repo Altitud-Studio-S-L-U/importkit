@@ -11,7 +11,7 @@ const source = fileSource('./uploads/orders.csv');
 ```
 
 - The path must name a regular file that exists when the run starts and stays unchanged until it ends. Copy an upload to a location your application owns before importing it.
-- Each run reads the whole file once to compute its SHA-256, which becomes the source's identity, and then reads it again to parse it. A difference between the two reads, or a change to the file's size or timestamps during the run, fails it with `SOURCE_CHANGED`.
+- Each run reads the whole file once to compute its SHA-256, which becomes the source's identity, and then reads it again to parse it. A validation reads it a third time at the end, so that its report describes the file as it still is. A difference between the reads, or a change to the file's size or timestamps during the run, fails it with `SOURCE_CHANGED`.
 - Validate and authorize the path before passing it: ImportKit is not a path sandbox.
 
 ## How ImportKit uses a source
