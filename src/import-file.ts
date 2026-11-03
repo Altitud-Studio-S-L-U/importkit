@@ -1,45 +1,19 @@
 import { createHash } from 'node:crypto';
 import { open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
-import { constants } from 'node:fs';
-import type { BigIntStats } from 'node:fs';
 import { resolve } from 'node:path';
 import { acquireCheckpointLock, canonicalCheckpointPath, readCheckpoint, writeCheckpoint } from './checkpoint.js';
 import type { Checkpoint } from './checkpoint.js';
 import { ImportKitError } from './errors.js';
+import { assertFileOptions, assertSourceState, checkAbort, fingerprint, openSource, positiveInteger, recordId, sourceBytes, sourceReadFlags } from './file-source.js';
 import type { ImportLimits, ImportOptions, ImportRecord, ImportResult } from './types.js';
 
-const DEFAULT_LIMITS: ImportLimits = Object.freeze({
-  maxSourceBytes: 1_073_741_824,
-  maxRecordBytes: 1_048_576,
-  maxRecords: 10_000_000,
-});
-
-function positiveInteger(value: number, name: string): void {
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new ImportKitError('INVALID_OPTIONS', `${name} must be a positive safe integer.`);
-  }
-}
-
-function identity(value: unknown, name: string): asserts value is string {
-  if (typeof value !== 'string' || value.trim().length === 0 || Buffer.byteLength(value) > 256) {
-    throw new ImportKitError('INVALID_OPTIONS', `${name} must be a nonempty string of at most 256 UTF-8 bytes.`);
-  }
-}
-
 function assertOptions<T>(options: ImportOptions<T>): { limits: ImportLimits; batchSize: number } {
-  if (options === null || typeof options !== 'object') {
-    throw new ImportKitError('INVALID_OPTIONS', 'Import options are required.');
-  }
-  identity(options.importId, 'importId');
-  identity(options.transformVersion, 'transformVersion');
-  if (typeof options.checkpointPath !== 'string' || options.checkpointPath.length === 0
-    || typeof options.source?.path !== 'string' || options.source.path.length === 0) {
+  const limits = assertFileOptions(options);
+  if (typeof options.checkpointPath !== 'string' || options.checkpointPath.length === 0) {
     throw new ImportKitError('INVALID_OPTIONS', 'Source and checkpoint paths are required.');
   }
-  identity(options.source.reader?.id, 'reader.id');
-  if (typeof options.source.reader.read !== 'function'
-    || typeof options.mapRecord !== 'function' || typeof options.commitBatch !== 'function') {
+  if (typeof options.commitBatch !== 'function') {
     throw new ImportKitError('INVALID_OPTIONS', 'Reader, mapping, and destination callbacks are required.');
   }
   const batchSize = options.batchSize ?? 500;
@@ -47,56 +21,7 @@ function assertOptions<T>(options: ImportOptions<T>): { limits: ImportLimits; ba
   if (batchSize > 10_000) {
     throw new ImportKitError('INVALID_OPTIONS', 'batchSize must not exceed 10,000 records.');
   }
-  const limits: ImportLimits = { ...DEFAULT_LIMITS, ...options.limits };
-  positiveInteger(limits.maxSourceBytes, 'maxSourceBytes');
-  positiveInteger(limits.maxRecordBytes, 'maxRecordBytes');
-  positiveInteger(limits.maxRecords, 'maxRecords');
-  if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) {
-    throw new ImportKitError('INVALID_OPTIONS', 'signal must be an AbortSignal.');
-  }
   return { limits, batchSize };
-}
-
-function checkAbort(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) throw new ImportKitError('ABORTED', 'Import cancelled.');
-}
-
-function sameFileState(first: BigIntStats, second: BigIntStats): boolean {
-  return first.dev === second.dev && first.ino === second.ino && first.size === second.size
-    && first.mtimeNs === second.mtimeNs && first.ctimeNs === second.ctimeNs;
-}
-
-async function assertSourceState(handle: FileHandle, expected: BigIntStats): Promise<void> {
-  const current = await handle.stat({ bigint: true });
-  if (!sameFileState(current, expected)) {
-    throw new ImportKitError('SOURCE_CHANGED', 'The source changed during the import. Keep it immutable for the entire run.');
-  }
-}
-
-async function* sourceBytes(handle: FileHandle, maxBytes: number, signal: AbortSignal | undefined): AsyncIterable<Uint8Array> {
-  let count = 0;
-  try {
-    while (true) {
-      checkAbort(signal);
-      // Each yielded buffer remains owned by its consumer. Positional reads also
-      // keep the descriptor open across fingerprinting, parsing, and state checks.
-      const buffer = Buffer.allocUnsafe(65_536);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, count);
-      if (bytesRead === 0) break;
-      count += bytesRead;
-      if (count > maxBytes) throw new ImportKitError('LIMIT_EXCEEDED', 'The source exceeds maxSourceBytes.');
-      yield buffer.subarray(0, bytesRead);
-    }
-  } catch (error) {
-    if (error instanceof ImportKitError) throw error;
-    throw new ImportKitError('SOURCE_ERROR', 'Unable to read the source file.', { cause: error });
-  }
-}
-
-async function fingerprint(handle: FileHandle, limits: ImportLimits, signal: AbortSignal | undefined): Promise<string> {
-  const hash = createHash('sha256');
-  for await (const chunk of sourceBytes(handle, limits.maxSourceBytes, signal)) hash.update(chunk);
-  return hash.digest('hex');
 }
 
 function assertCheckpoint<T>(state: Checkpoint, options: ImportOptions<T>, sourceHash: string, limits: ImportLimits): void {
@@ -119,24 +44,16 @@ export async function importFile<T>(options: ImportOptions<T>): Promise<ImportRe
     throw new ImportKitError('INVALID_OPTIONS', 'Source, checkpoint, and lock must be different files.');
   }
   const release = await acquireCheckpointLock(checkpointPath);
-  const readFlags = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
   let handle: FileHandle | undefined;
   try {
-    try {
-      handle = await open(sourcePath, readFlags);
-    } catch (error) {
-      throw new ImportKitError('SOURCE_ERROR', 'Unable to open the source file.', { cause: error });
-    }
-    const sourceState = await handle.stat({ bigint: true });
-    if (!sourceState.isFile()) throw new ImportKitError('SOURCE_ERROR', 'The source must be a regular file.');
-    if (sourceState.size > BigInt(limits.maxSourceBytes)) {
-      throw new ImportKitError('LIMIT_EXCEEDED', 'The source exceeds maxSourceBytes.');
-    }
+    const source = await openSource(sourcePath, limits.maxSourceBytes);
+    handle = source.handle;
+    const sourceState = source.state;
     // Compare file identity as well as paths so hardlinks cannot overwrite the source.
     for (const reservedPath of [checkpointPath, `${checkpointPath}.lock`]) {
       let reserved: FileHandle | undefined;
       try {
-        reserved = await open(reservedPath, readFlags);
+        reserved = await open(reservedPath, sourceReadFlags);
         const reservedState = await reserved.stat({ bigint: true });
         if (reservedState.dev === sourceState.dev && reservedState.ino === sourceState.ino) {
           throw new ImportKitError('INVALID_OPTIONS', 'Source, checkpoint, and lock must be different files.');
@@ -198,9 +115,7 @@ export async function importFile<T>(options: ImportOptions<T>): Promise<ImportRe
         index++;
         if (index > limits.maxRecords) throw new ImportKitError('LIMIT_EXCEEDED', 'The source exceeds maxRecords.', { recordIndex: index });
         if (index <= resumedFrom) continue;
-        const id = createHash('sha256').update(JSON.stringify([
-          options.importId, sourceHash, options.source.reader.id, options.transformVersion, index,
-        ])).digest('hex');
+        const id = recordId(options, sourceHash, index);
         let value: T;
         try {
           value = await options.mapRecord(input, { id, index });
