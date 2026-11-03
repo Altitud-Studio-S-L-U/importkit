@@ -18,7 +18,7 @@
 
 ImportKit handles the part between reading a file and writing validated records to your application. It coordinates parsing, mapping, sequential batches, and local checkpoints. You supply the validation rules and destination writes.
 
-Built by [Altitud Studio](https://altitudstudio.ad/en/). MIT licensed. Version `0.2.0`; the API may change before `1.0`.
+Built by [Altitud Studio](https://altitudstudio.ad/en/). MIT licensed. Source version `0.3.0`; the API may change before `1.0`.
 
 ## What is included
 
@@ -28,7 +28,7 @@ Built by [Altitud Studio](https://altitudstudio.ad/en/). MIT licensed. Version `
 | Processing | Async mapping and one destination batch at a time |
 | Prevalidation | Read-only traversal, bounded mapping issues, explicit incomplete parsing reports |
 | Recovery | SHA-256 source identity, validated checkpoints, stable record IDs |
-| Resource controls | Source size, record size, record count, and batch size |
+| Resource controls | Source bytes, record bytes/count, records per batch, and optional measured batch bytes |
 | Failure handling | Fail-fast imports, validation issue counts, operational errors, cooperative cancellation |
 | Integration | A TypeScript library with a format-independent `RecordReader` contract |
 
@@ -66,7 +66,7 @@ To build a tarball from a source checkout:
 npm run build
 npm pack
 # In your application, install the generated tarball:
-npm install /absolute/path/to/altitud-studio-importkit-0.2.0.tgz
+npm install /absolute/path/to/altitud-studio-importkit-0.3.0.tgz
 ```
 
 ## Use in your backend
@@ -191,6 +191,8 @@ The checkpoint's parent directory must already exist; ImportKit does not create 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `batchSize` | `500` | Maximum mapped records per destination call; integer from `1` through `10,000` |
+| `maxBatchBytes` | Unset | Optional positive safe integer limiting the sum of measured record bytes in one batch |
+| `measureRecordBytes` | Unset | Synchronous `(value, context) => number`; required together with `maxBatchBytes` |
 | `limits.maxSourceBytes` | `1,073,741,824` (1 GiB) | Maximum source file size |
 | `limits.maxRecordBytes` | `1,048,576` (1 MiB) | Maximum serialized UTF-8 bytes per record, including its terminator |
 | `limits.maxRecords` | `10,000,000` | Maximum parsed records, including records visited during resume |
@@ -203,7 +205,41 @@ limits: {
 }
 ```
 
-Limits must be positive safe integers. The byte limit also applies to the CSV header; delimiters, quotes, an initial BOM, and line terminators count toward serialized size. The built-in readers enforce record limits while decoding; ImportKit waits for each destination batch before requesting more mapped records. Mapped values can be larger than their input, so choose batch sizes and validation rules that fit your application's memory budget. `mapRecord` and `commitBatch` must also bound their own work.
+Source and record limits must be positive safe integers. `maxRecordBytes` also applies to the CSV header; delimiters, quotes, an initial BOM, and line terminators count toward serialized size. The built-in readers enforce record limits while decoding. Mapped values can be larger than their input, so source limits do not bound transformed values. Mapping, measurement and destination callbacks must bound their own allocations and work.
+
+### Bound a batch by measured bytes
+
+Without the two byte-budget options, imports retain their existing count-only behavior: `batchSize` controls when a pending batch is committed. To enable byte accounting, supply **both** `maxBatchBytes` and `measureRecordBytes`. The count limit continues to apply.
+
+```ts
+await importFile({
+  source: { path: './orders.csv', reader: csvReader() },
+  importId: 'orders-2026-11',
+  transformVersion: 'encoded-orders-v1',
+  checkpointPath: './orders.checkpoint.json',
+  batchSize: 500,
+  maxBatchBytes: 4 * 1024 * 1024, // 4 MiB of measured record payloads
+  mapRecord(input) {
+    return `${JSON.stringify(parseOrder(input))}\n`;
+  },
+  measureRecordBytes(value) {
+    return Buffer.byteLength(value, 'utf8');
+  },
+  async commitBatch(records) {
+    await saveEncodedOrdersIdempotently(records);
+  },
+});
+```
+
+The application functions validate and encode orders, then persist them idempotently using each record's stable ID. Here the measurement covers each UTF-8 JSON line, including its newline. It does not include additional database, request or batch-envelope overhead. ImportKit does not stringify arbitrary mapped values on your behalf.
+
+The measurement callback receives the mapped `value` and `{ id, index }`. It runs once for each successfully mapped, unconfirmed record reached during an attempt and must return a **nonnegative safe integer** synchronously; zero is allowed. Thrown errors, negative or fractional sizes, `NaN`, infinity and Promise results fail with `MEASURE_ERROR` and the record ordinal. Missing one of the two options is invalid configuration. Measurement should be deterministic and free of side effects; a retry can map and measure uncheckpointed records again.
+
+Keep mapped values and their measured representation unchanged until their destination call resolves. Reusing a mutable object or buffer across records can change already measured values; ImportKit retains the supplied values rather than deep-cloning them.
+
+If the next record would exceed the remaining byte budget, ImportKit commits the previous batch before adding that record. Equality with either limit commits immediately. A single record measured above `maxBatchBytes` fails with `LIMIT_EXCEEDED` **before** flushing a pending previous batch. Earlier committed batches remain committed. Checkpoints always advance to the last record in the committed batch, including when a later record has already been mapped for the size decision.
+
+Byte accounting changes batch grouping, not record IDs or the checkpoint schema. Batch limits can change on resume without changing stable IDs. Delivery remains at least once, and the destination retains its idempotency responsibility. `maxBatchBytes` limits reported payload sizes, not V8 heap or process RSS; mapping and measurement happen before an oversized result can be rejected.
 
 ## Readers
 
@@ -231,9 +267,37 @@ The exported `RecordReader` interface accepts an async stream of bytes and yield
 
 ## Errors and cancellation
 
-Catch `ImportKitError` and inspect its `code`. Categories include invalid options, source changes, limits, parsing, mapping, destination commits, checkpoints, import locks, and cancellation. `recordIndex` is available when relevant. Underlying failures may be attached as `cause`; treat causes as potentially containing application data when logging.
+Catch `ImportKitError` and inspect its `code`. Categories include invalid options, source changes, limits, parsing, mapping, byte measurement, destination commits, checkpoints, import locks, and cancellation. `recordIndex` is available when relevant. Underlying failures may be attached as `cause`; treat causes as potentially containing application data when logging.
 
 Pass an `AbortSignal` through `signal` for cooperative cancellation. Cancellation does not roll back an already committed destination batch. ImportKit records that batch's checkpoint before stopping. A running application callback must finish or implement its own cancellation and timeout policy.
+
+## Time and space
+
+These bounds describe the built-in readers under a conventional linear decoding model. Custom readers and application callbacks can have different costs.
+
+| Symbol | Meaning |
+| --- | --- |
+| `N`, `R` | Source bytes and parsed records |
+| `B`, `b` | Nonempty destination batches in this attempt, and the `batchSize` record cap |
+| `K`, `S` | Optional measured batch-byte cap and maximum serialized source-record bytes |
+| `H`, `I` | CSV column count and retained validation issues; header bytes are also bounded by `S` |
+
+| Operation | Traversal and additional costs |
+| --- | --- |
+| Import | `O(N + R + H + B) + Σ map_i + Σ measure_i + Σ destination_j + Σ durability_j` |
+| Validation | `O(N + R + H + I) + Σ map_i` |
+
+The sums are the actual callback and persistence costs; measurement is absent in count-only mode. Callback execution, database work and filesystem synchronization are not constant-time guarantees.
+
+A successful import reads approximately `2N` source bytes: fingerprinting, then parsing with another hash. A complete validation reads `3N`: fingerprinting, parsing with hashing, then a final fingerprint after callbacks. A structural parsing failure still requires both full fingerprint passes plus the parsed prefix. Validation followed by import therefore normally reads `5N`; filesystem caching does not remove these logical passes.
+
+Recovery reparses from the start. It skips mapping and delivery for confirmed ordinals, but still fingerprints and decodes the whole source. A nearly complete checkpoint does not make traversal proportional to the remaining suffix. Checkpoints hold fixed metadata, bounded to 16 KiB, rather than an index or a list of every imported record; persistence performs `B + O(1)` checkpoint writes on a successful attempt.
+
+Library bookkeeping retains batch references and record metadata, reader state and at most `I` validation issues; it does not accumulate all `R` records. Under a bounded decoded-representation model, auxiliary state scales with `O(S + H + b + I)`, excluding mapped values and callback-owned memory. CSV can amplify memory: many short or empty fields still allocate arrays, strings and object entries for `H` columns. Parser prefetch and headers also occupy memory; a source-byte limit is not a heap-byte limit.
+
+For records that pass the individual size check, a pending batch reports at most `K` bytes. Deciding whether the next mapped record fits can temporarily retain that batch **and** one further record of up to `K` measured bytes. Thus retained measured payload can approach `2K`, in addition to wrappers, decoding and application work. Only when actual retained representations are bounded by their measurements can payload space be modelled as `O(K)`; arbitrary objects, shared backing stores and inaccurate measurements do not imply a heap bound. An oversized value can already have been allocated before rejection. In count-only mode, mapped batch space depends on the values produced by the application.
+
+None of these bounds asserts constant process RSS. V8 allocation and garbage collection, native buffers, allocator fragmentation, runtime overhead and callback retention affect observed memory. Benchmark samples and operating-system high-water marks are measurements for their stated workload and environment, not a proof of a universal memory ceiling.
 
 ## Development
 
@@ -253,6 +317,45 @@ npm run benchmark -- 100000 1000
 The arguments select the number of records (`100,000` through `10,000,000`) and import batch size (`1` through `10,000`). The [benchmark script](benchmarks/import.mjs) generates deterministic JSON Lines in groups of at most 1,000 records, validates them, then imports them to a local JSONL destination with `fsync` per batch and real checkpoints. It measures a fresh run; its append-only sink does not implement replay deduplication. Use the SQLite recovery demo to study idempotent destination writes. Temporary input, destination, and checkpoints are removed afterward.
 
 The JSON report records the Node version, operating system, input and output bytes, source hash, record and batch counts, elapsed phase times, sampled RSS and heap usage, and process high-water RSS. Input generation is excluded from phase timings. Validation runs before import in the same process without clearing filesystem caches. Memory samples are observations, not a proof of the absolute peak; process high-water RSS includes both phases and data generation. Results describe that machine and workload, not universal throughput or memory guarantees.
+
+### Exercise 1 GB and 10 GB files
+
+The separate [large-file runner](benchmarks/large-files.mjs) generates exact-size synthetic CSV or JSON Lines files and runs each selected phase in a fresh Node process. File sizes use **decimal bytes**: `1 GB = 1,000,000,000` bytes. Memory-budget options use MiB (`1 MiB = 1,048,576` bytes).
+
+```sh
+npm run build
+node benchmarks/large-files.mjs --format jsonl --bytes 1000000000 --mode both --work-dir /var/tmp/importkit-bench --require-cgroup
+node benchmarks/large-files.mjs --format jsonl --bytes 10000000000 --mode import --work-dir /var/tmp/importkit-bench --require-cgroup
+```
+
+The first command validates and imports 1 GB; the second imports 10 GB. An import run does not also exercise `validateFile` unless the selected mode includes validation. Use `--format csv` for CSV. The runner sets `maxSourceBytes` explicitly for the generated file; it does not change the library's default source limit. Optional controls include `--row-bytes`, `--batch-size`, `--max-batch-bytes`, `--max-records`, `--sample-ms`, `--rss-budget-mib`, `--heap-budget-mib` and `--slow-ms`.
+
+`--require-cgroup` requires a verified Linux cgroup memory profile; an unconstrained run must not be described as memory-capped. The child Node old-space setting is distinct from total heap or RSS, and a fresh process does not clear filesystem caches. The JSON output records environment, workload, phase timings, observed memory, operating-system high-water RSS and confinement evidence. Progress goes to stderr so stdout can be saved as an external evidence artifact.
+
+For example, with a running Linux systemd user manager, the following creates a fresh 512 MiB cgroup with swap disabled for the generator and its workers. Run it from the checkout after building:
+
+```sh
+systemd-run --user --wait --pipe --collect --quiet \
+  -p MemoryMax=536870912 -p MemorySwapMax=0 \
+  "$(command -v node)" --max-old-space-size=64 \
+  "$PWD/benchmarks/large-files.mjs" --format jsonl --bytes 1000000000 \
+  --mode both --work-dir "$PWD/.tmp" --require-cgroup > report.json
+```
+
+The large-file destination verifies record count, order and a digest in memory while imports persist real checkpoints. It does not persist records to a database or measure database throughput. Slower destinations and larger rows can be exercised separately on smaller files. Replay and idempotency remain the subject of the recovery demo, rather than a claim made by this runner.
+
+Observed on Node.js 24.11.1, Linux x64 under WSL2, using nominal 4 KiB synthetic records, 1 MiB measured batches and a 512 MiB cgroup with swap disabled:
+
+| Format | Source bytes | Imported records | Importer peak RSS reported by the OS |
+| --- | ---: | ---: | ---: |
+| CSV | 1,000,000,000 | 244,141 | 81.91 MiB |
+| CSV | 10,000,000,000 | 2,441,407 | 85.39 MiB |
+| JSON Lines | 1,000,000,000 | 244,141 | 88.18 MiB |
+| JSON Lines | 10,000,000,000 | 2,441,407 | 81.86 MiB |
+
+Both 1 GB cases also completed a separate validation phase. The 10 GB cases exercised import only. All source sizes, order, values, record counts, digests and batch limits were verified; no OOM events occurred. The preset acceptance criterion allowed at most 64 MiB additional importer peak RSS from 1 GB to 10 GB for the same format, which both cases met.
+
+These are single observations per case, with up to two cases overlapping and filesystem caches left intact. They do not establish universal RSS or throughput guarantees; the cgroup peak also includes the coordinator and file cache. [The 0.3.0 release](https://github.com/Altitud-Studio-S-L-U/importkit/releases/tag/v0.3.0) includes the raw reports, fixed criteria, analysis and memory figure.
 
 There are no GitHub Actions workflows or deployment pipelines in this repository. Maintainers run the checks locally and review pull requests before merging. See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [SECURITY.md](SECURITY.md) for reporting concerns.
 

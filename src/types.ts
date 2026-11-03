@@ -32,6 +32,10 @@ export interface ImportOptions<T> {
   readonly transformVersion: string;
   readonly checkpointPath: string;
   readonly batchSize?: number;
+  /** Optional logical byte budget for a batch; requires measureRecordBytes. Not a heap limit. */
+  readonly maxBatchBytes?: number;
+  /** Synchronous size of the transformed value's intended encoding; requires maxBatchBytes. */
+  readonly measureRecordBytes?: (value: T, context: RecordContext) => number;
   readonly limits?: Partial<ImportLimits>;
   readonly signal?: AbortSignal;
   readonly mapRecord: (input: unknown, context: RecordContext) => T | Promise<T>;

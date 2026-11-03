@@ -1,6 +1,6 @@
 {
   "name": "@altitud-studio/importkit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Validate and resume bounded file imports for Node.js. Stream records, report issues, and recover with stable IDs.",
   "type": "module",
   "license": "MIT",
@@ -22,6 +22,7 @@
     "demo:validation": "npm run build && node examples/validation.mjs",
     "demo:recovery": "npm run build && node examples/recovery.mjs",
     "benchmark": "npm run build && node benchmarks/import.mjs",
+    "benchmark:large": "npm run build && node benchmarks/large-files.mjs",
     "check": "npm run typecheck && npm test"
   },
   "dependencies": { "csv-parse": "7.0.3" },
