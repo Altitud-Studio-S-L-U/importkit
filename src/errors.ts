@@ -7,6 +7,7 @@ export type ImportErrorCode =
   | 'CHECKPOINT_ERROR'
   | 'CHECKPOINT_MISMATCH'
   | 'IMPORT_LOCKED'
+  | 'SCHEMA_ERROR'
   | 'MAP_ERROR'
   | 'MEASURE_ERROR'
   | 'COMMIT_ERROR'

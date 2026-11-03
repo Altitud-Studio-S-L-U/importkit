@@ -9,6 +9,7 @@ import { assertSourceState, closeSource, fingerprint, openSource } from './file-
 import type { OpenSource } from './file-source.js';
 import { assertImportOptions } from './options.js';
 import type { ImportSettings } from './options.js';
+import { RejectedRecord } from './transform.js';
 import { traverseRecords } from './traversal.js';
 import type { Checkpoint, CommitContext, ImportOptions, ImportResult, RecordContext } from './types.js';
 
@@ -33,7 +34,7 @@ function measureBytes<T>(measure: (value: T, context: RecordContext) => number, 
 }
 
 /** Imports an immutable local file with sequential, at-least-once destination batches. */
-export async function importFile<T>(options: ImportOptions<T>): Promise<ImportResult> {
+export async function importFile<I = unknown, T = I>(options: ImportOptions<I, T>): Promise<ImportResult> {
   const settings = assertImportOptions(options);
   checkAbort(options.signal);
   const sourcePath = resolve(options.source.path);
@@ -54,9 +55,9 @@ export async function importFile<T>(options: ImportOptions<T>): Promise<ImportRe
   }
 }
 
-async function importOpenSource<T>(
-  options: ImportOptions<T>,
-  { limits, batchSize, byteBudget }: ImportSettings<T>,
+async function importOpenSource<I, T>(
+  options: ImportOptions<I, T>,
+  { limits, transform, batchSize, byteBudget }: ImportSettings<T>,
   checkpoints: GuardedCheckpointStore,
   { handle, state }: OpenSource,
 ): Promise<ImportResult> {
@@ -101,13 +102,8 @@ async function importOpenSource<T>(
       const index = traversal.visit(record);
       if (index <= resumedFrom) continue;
       const context = traversal.context(index, record);
-      let value: T;
-      try {
-        value = await options.mapRecord(record.value, context);
-      } catch (error) {
-        checkAbort(options.signal);
-        throw new ImportKitError('MAP_ERROR', 'Record mapping or validation failed.', { cause: error, recordIndex: index, line: context.line });
-      }
+      const value = await transform(record.value, context);
+      if (value instanceof RejectedRecord) throw value.toError(context);
       checkAbort(options.signal);
       let bytes = 0;
       if (byteBudget !== undefined) {

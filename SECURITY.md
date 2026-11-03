@@ -12,7 +12,7 @@ Do not put credentials, customer files, private checkpoints or exploit details i
 
 | Input | Trusted | How ImportKit handles it |
 | --- | --- | --- |
-| Source content | No | Bounds the size of the source, of each record and the number of records. Rejects invalid UTF-8 and reserved CSV headers, and builds CSV records without a prototype. Error messages and reports never include source values. |
+| Source content | No | Bounds the size of the source, of each record and the number of records. Rejects invalid UTF-8 and reserved CSV headers, and builds CSV records without a prototype. Error messages and reports never include source values, and reports include schema messages, which can quote them, only with `includeSchemaMessages`. |
 | What a checkpoint store loads | No | Validates the checkpoint's schema and identity before using it, and bounds the size of checkpoint files. |
 | Source paths | Chosen by your application | Opens the path as given. ImportKit is not a path sandbox: validate and authorize paths first. |
 | Readers, callbacks and checkpoint stores | Yes | Runs them in your process with its permissions. ImportKit cannot bound their memory, time or side effects. |

@@ -1,20 +1,14 @@
 import { checkAbort, ImportKitError } from './errors.js';
 import { assertSourceState, closeSource, fingerprint, openSource } from './file-source.js';
+import { IssueCollector } from './issues.js';
 import { assertValidationOptions } from './options.js';
+import { RejectedRecord } from './transform.js';
 import { traverseRecords } from './traversal.js';
-import type { RecordContext, ValidationIssue, ValidationOptions, ValidationParseError, ValidationResult } from './types.js';
-
-function issue(code: ValidationIssue['code'], context: RecordContext, message: string): ValidationIssue {
-  return Object.freeze({
-    code, recordIndex: context.index,
-    ...(context.line === undefined ? {} : { line: context.line }),
-    message,
-  });
-}
+import type { ValidationOptions, ValidationParseError, ValidationResult } from './types.js';
 
 /** Validates an immutable local file without opening a destination or checkpoint. */
-export async function validateFile<T>(options: ValidationOptions<T>): Promise<ValidationResult> {
-  const { limits, maxIssues } = assertValidationOptions(options);
+export async function validateFile<I = unknown, T = I>(options: ValidationOptions<I, T>): Promise<ValidationResult> {
+  const { limits, transform, maxIssues, includeSchemaMessages } = assertValidationOptions(options);
   checkAbort(options.signal);
   const { handle, state } = await openSource(options.source.path, limits.maxSourceBytes);
   try {
@@ -22,7 +16,7 @@ export async function validateFile<T>(options: ValidationOptions<T>): Promise<Va
     await assertSourceState(handle, state);
     let validRecords = 0;
     let invalidRecords = 0;
-    const issues: ValidationIssue[] = [];
+    const issues = new IssueCollector(maxIssues, includeSchemaMessages);
     let incomplete = false;
     let parseErrorLine: number | undefined;
     const traversal = traverseRecords(handle, options, limits, sourceHash);
@@ -31,13 +25,12 @@ export async function validateFile<T>(options: ValidationOptions<T>): Promise<Va
       for await (const record of traversal.inputs()) {
         const index = traversal.visit(record);
         const context = traversal.context(index, record);
-        try {
-          await options.mapRecord(record.value, context);
-          validRecords++;
-        } catch {
-          checkAbort(options.signal);
+        const result = await transform(record.value, context);
+        if (result instanceof RejectedRecord) {
           invalidRecords++;
-          if (issues.length < maxIssues) issues.push(issue('MAP_ERROR', context, 'Record mapping or validation failed.'));
+          issues.add(result, context);
+        } else {
+          validRecords++;
         }
         checkAbort(options.signal);
       }
@@ -61,7 +54,7 @@ export async function validateFile<T>(options: ValidationOptions<T>): Promise<Va
     await assertSourceState(handle, state);
     const summary = {
       sourceHash, processedRecords: traversal.count(), validRecords, invalidRecords,
-      issues: Object.freeze(issues), issuesTruncated: invalidRecords > issues.length,
+      issues: issues.issues(), issuesTruncated: issues.truncated(),
     };
     if (!incomplete) return { ...summary, status: invalidRecords === 0 ? 'valid' : 'invalid' };
     const parseError: ValidationParseError = Object.freeze({
