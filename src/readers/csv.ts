@@ -66,6 +66,18 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
         on_record: onRecord as unknown as (fields: string[], info: InfoRecord) => string[],
       });
 
+      // destroy() drops a write callback that backpressure holds back, so every
+      // wait for the parser also ends when it closes; the producer then stops.
+      const closed = new Promise<void>((resolve) => { parser.once('close', resolve); });
+      const settle = async (operation: (done: (error?: Error | null) => void) => void): Promise<void> => {
+        const done = new Promise<void>((resolve, reject) => {
+          operation((error) => error ? reject(csvError(error, recordLine)) : resolve());
+        });
+        // A failure reported after the parser closed has no consumer left to reach.
+        done.catch(() => {});
+        await Promise.race([done, closed]);
+      };
+
       // A producer and consumer run together so the parser's object-mode high-water
       // mark supplies backpressure. Feeding is bounded by parsed byte progress,
       // because max_record_size alone does not count delimiters or empty fields.
@@ -74,6 +86,7 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
           for await (const chunk of chunks) {
             let offset = 0;
             while (offset < chunk.byteLength) {
+              if (parser.destroyed) return;
               const capacity = limits.maxRecordBytes + lookaheadBytes - (offeredBytes - completedBytes);
               if (capacity <= 0) throw recordSizeError(recordLine);
               const end = Math.min(chunk.byteLength, offset + capacity, offset + 16_384);
@@ -81,17 +94,14 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
               validateUtf8(decoder, part);
               offeredBytes += part.byteLength;
               lines.append(part);
-              await new Promise<void>((resolve, reject) => {
-                parser.write(part, (error) => error ? reject(csvError(error, recordLine)) : resolve());
-              });
+              await settle((done) => parser.write(part, done));
               if (offeredBytes - completedBytes >= limits.maxRecordBytes + lookaheadBytes) throw recordSizeError(recordLine);
               offset = end;
             }
           }
+          if (parser.destroyed) return;
           validateUtf8(decoder);
-          await new Promise<void>((resolve, reject) => {
-            parser.end((error?: Error | null) => error ? reject(csvError(error, recordLine)) : resolve());
-          });
+          await settle((done) => parser.end(done));
         } catch (error) {
           parser.destroy(error instanceof ImportKitError ? error : new ImportKitError('SOURCE_ERROR', 'Unable to read source bytes.', { cause: error }));
         }
