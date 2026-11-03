@@ -1,22 +1,30 @@
 # Security policy
 
-ImportKit parses application-selected local files and calls application-supplied mapping and destination code. It does not authenticate uploads, authorize destination writes, sandbox callbacks, or provide a hosted service.
+ImportKit parses files that your application selects and calls the mapping, destination and checkpoint code that your application supplies. It does not authenticate uploads, authorize destination writes, sandbox callbacks or run as a hosted service.
 
-## Reporting a concern
+## Report a vulnerability
 
-Use GitHub's **Report a vulnerability** option when it is available for this repository. Otherwise, contact [Altitud Studio](https://altitudstudio.ad/es/) and ask for a private reporting channel.
+Use GitHub's **Report a vulnerability** option on this repository. If it is unavailable, contact [Altitud Studio](https://altitudstudio.ad/es/) and ask for a private channel.
 
-Do not include credentials, customer files, private checkpoints, or exploit details in a public issue. A synthetic reproduction, affected version or commit, and a description of the potential impact help us investigate. No response-time or support-window guarantee is offered for this initial release.
+Do not put credentials, customer files, private checkpoints or exploit details in a public issue. A synthetic reproduction, the affected version or commit and the potential impact help us investigate. Fixes are released in a new version of the latest release line.
+
+## Threat model
+
+| Input | Trusted | How ImportKit handles it |
+| --- | --- | --- |
+| Source content | No | Bounds the size of the source, of each record and the number of records. Rejects invalid UTF-8 and reserved CSV headers, and builds CSV records without a prototype. Error messages and reports never include source values. |
+| What a checkpoint store loads | No | Validates the checkpoint's schema and identity before using it, and bounds the size of checkpoint files. |
+| Source paths | Chosen by your application | Opens the path as given. ImportKit is not a path sandbox: validate and authorize paths first. |
+| Readers, callbacks and checkpoint stores | Yes | Runs them in your process with its permissions. ImportKit cannot bound their memory, time or side effects. |
 
 ## Integration boundaries
 
-- Validate and authorize file paths before passing them to ImportKit. The library is not an upload boundary or path sandbox.
-- Use immutable, application-owned source files.
-- Keep checkpoints where only the importing service can write them: a local directory with restrictive permissions, or a table that service owns. ImportKit validates a loaded checkpoint's schema and identity, but a well-formed checkpoint written by someone else for the same import would still skip records.
-- Treat all parsed values as untrusted. Validate them before SQL, shell commands, templates, or other sensitive sinks.
-- Keep resource limits enabled and bound the work performed by custom readers, mapping, and destination callbacks.
-- Make destination writes idempotent. Checkpoint recovery permits repeated deliveries and cannot undo external side effects.
-- Avoid logging raw records or underlying error causes without reviewing their contents.
-- The file checkpoint store's lock coordinates one local path. A custom store coordinates runs only if its `lock()` does. Neither is an authorization mechanism.
+- Import immutable files that your application owns. Copy an upload to such a location before importing it.
+- Keep checkpoints where only the importing service can write them: a directory with restrictive permissions, or a table that service owns. A malformed checkpoint is rejected, but a well-formed one written by someone else for the same import would make the next run skip records.
+- Treat parsed values as untrusted. Validate them before they reach SQL, shell commands, templates or other sensitive sinks.
+- Keep resource limits enabled, and bound the work of custom readers, mapping and destination code.
+- Make destination writes idempotent. Recovery can deliver a batch again, and it cannot undo external side effects such as emails or payments.
+- Review an error's `cause` before logging it: it can contain application data or file content.
+- The file checkpoint store's lock coordinates runs that use one local path. A custom store coordinates runs only if its `lock()` does. Neither is an authorization mechanism.
 
-See the [README recovery contract](README.md#the-recovery-contract) for the current persistence and coordination limits.
+[Recovery](docs/recovery.md) describes the persistence and coordination guarantees in detail.

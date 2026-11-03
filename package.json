@@ -1,7 +1,7 @@
 {
   "name": "@altitud-studio/importkit",
   "version": "0.3.0",
-  "description": "Validate and resume bounded file imports for Node.js. Stream records, report issues, and recover with stable IDs.",
+  "description": "Resumable, validated CSV and JSON Lines imports for Node.js backends.",
   "type": "module",
   "license": "MIT",
   "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
@@ -13,7 +13,7 @@
   },
   "types": "./dist/index.d.ts",
   "sideEffects": false,
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": ["dist", "README.md", "CHANGELOG.md", "LICENSE"],
   "repository": { "type": "git", "url": "git+https://github.com/Altitud-Studio-S-L-U/importkit.git" },
   "bugs": { "url": "https://github.com/Altitud-Studio-S-L-U/importkit/issues" },
   "homepage": "https://github.com/Altitud-Studio-S-L-U/importkit#readme",
@@ -28,7 +28,8 @@
     "demo:transactional": "npm run build && node examples/transactional.mjs",
     "benchmark": "npm run build && node benchmarks/import.mjs",
     "benchmark:large": "npm run build && node benchmarks/large-files.mjs",
-    "check": "npm run typecheck && npm test"
+    "check:docs": "npm run build && node scripts/check-docs.mjs",
+    "check": "npm run typecheck && npm test && node scripts/check-docs.mjs"
   },
   "dependencies": { "csv-parse": "7.0.3" },
   "devDependencies": { "@types/node": "24.19.2", "typescript": "7.0.2" }
