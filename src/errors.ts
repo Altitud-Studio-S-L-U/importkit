@@ -8,6 +8,7 @@ export type ImportErrorCode =
   | 'CHECKPOINT_MISMATCH'
   | 'IMPORT_LOCKED'
   | 'MAP_ERROR'
+  | 'MEASURE_ERROR'
   | 'COMMIT_ERROR'
   | 'ABORTED';
 
