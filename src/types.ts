@@ -46,3 +46,29 @@ export interface ImportResult {
   readonly committedBatches: number;
   readonly sourceHash: string;
 }
+
+export interface ValidationOptions<T> extends Pick<ImportOptions<T>, 'source' | 'importId' | 'transformVersion' | 'mapRecord' | 'limits' | 'signal'> {
+  /** Maximum mapping issues retained; all mapping failures are still counted. */
+  readonly maxIssues?: number;
+}
+
+export interface ValidationIssue {
+  readonly code: 'MAP_ERROR';
+  readonly recordIndex: number;
+  /** Sanitized library message; application exception messages and causes are excluded. */
+  readonly message: string;
+}
+
+interface ValidationSummary {
+  readonly sourceHash: string;
+  readonly processedRecords: number;
+  readonly validRecords: number;
+  readonly invalidRecords: number;
+  readonly issues: readonly ValidationIssue[];
+  readonly issuesTruncated: boolean;
+}
+
+export type ValidationResult = ValidationSummary & (
+  | { readonly status: 'valid' | 'invalid' }
+  | { readonly status: 'incomplete'; readonly parseError: { readonly code: 'PARSE_ERROR'; readonly message: string } }
+);
