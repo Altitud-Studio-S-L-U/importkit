@@ -47,6 +47,7 @@ console.log(`Imported ${result.processedRecords - result.resumedFrom} records in
 - `importId` names one logical import, such as one uploaded file. Run again with the same `importId` and checkpoint store to resume.
 - `transformVersion` names your mapping rules. Change it when `mapRecord` or the meaning of the destination changes; a saved checkpoint for another version is then rejected instead of mixing both.
 - Record IDs derive from `importId`, `transformVersion`, the file's content, the reader and the record's position. They do not depend on the batch size.
+- `fileSource` reads a local file. Any object that implements `ByteSource` can read other storage; see [Sources](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/sources.md).
 
 ## Validate before importing
 
@@ -171,6 +172,7 @@ The demos use synthetic data. The two recovery demos use Node's built-in `node:s
 - [API reference](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/api.md): every option, result, type and error code.
 - [Validation](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/validation.md): schemas, reports and HTTP responses.
 - [Recovery](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/recovery.md): the checkpoint contract, custom stores, locks and concurrent runs.
+- [Sources](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/sources.md): local files and your own storage.
 - [Readers](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/readers.md): CSV, JSON Lines and your own formats.
 - [Limits](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/limits.md): resource limits and batches bounded by measured bytes.
 - [Performance](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/performance.md): time and space costs, and measurements with 1 GB and 10 GB files.

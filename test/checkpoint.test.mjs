@@ -7,14 +7,16 @@ import { acquireCheckpointLock, canonicalCheckpointPath, readCheckpoint, writeCh
 
 const scratchRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '.tmp');
 const fixture = Object.freeze({
-  version: 1,
+  version: 2,
   importId: 'fixture-import',
   transformVersion: 'v1',
   readerId: 'jsonl:v1:utf8-strict',
-  sourceHash: 'a'.repeat(64),
+  sourceIdentity: 'a'.repeat(64),
   processedRecords: 2,
   completed: false,
 });
+const { sourceIdentity: _identity, ...identityFields } = fixture;
+const legacy = Object.freeze({ ...identityFields, version: 1, sourceHash: 'b'.repeat(64) });
 
 async function scope(t) {
   await mkdir(scratchRoot, { recursive: true });
@@ -51,11 +53,15 @@ test('checkpoint validation rejects incompatible or unexpected metadata', async 
   const { checkpoint } = await scope(t);
   const invalid = [
     null, [], {},
-    { ...fixture, version: 2 },
+    { ...fixture, version: 3 },
+    { ...fixture, version: 1 },
+    { ...legacy, version: 2 },
     { ...fixture, importId: '' },
     { ...fixture, transformVersion: 1 },
     { ...fixture, readerId: '' },
-    { ...fixture, sourceHash: 'not-a-sha256' },
+    { ...fixture, sourceIdentity: '' },
+    { ...fixture, sourceIdentity: 'x'.repeat(513) },
+    { ...legacy, sourceHash: 'not-a-sha256' },
     { ...fixture, processedRecords: -1 },
     { ...fixture, processedRecords: 0.5 },
     { ...fixture, processedRecords: Number.MAX_SAFE_INTEGER + 1 },
@@ -66,6 +72,13 @@ test('checkpoint validation rejects incompatible or unexpected metadata', async 
     await writeFile(checkpoint, JSON.stringify(value));
     await assert.rejects(readCheckpoint(checkpoint), { code: 'CHECKPOINT_ERROR' });
   }
+});
+
+test('a version 1 checkpoint written by 0.3 is read as version 2 with the same identity', async (t) => {
+  const { checkpoint } = await scope(t);
+  await writeFile(checkpoint, JSON.stringify(legacy));
+  const { sourceHash, ...fields } = legacy;
+  assert.deepEqual(await readCheckpoint(checkpoint), { ...fields, version: 2, sourceIdentity: sourceHash });
 });
 
 test('invalid writes preserve the previous checkpoint', async (t) => {

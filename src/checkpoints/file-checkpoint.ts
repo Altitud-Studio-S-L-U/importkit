@@ -5,7 +5,7 @@ import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { hasErrorCode, ImportKitError } from '../errors.js';
-import { sourceReadFlags } from '../file-source.js';
+import { sourceReadFlags } from '../sources/file-source.js';
 import type { Checkpoint, CheckpointStore } from '../types.js';
 import { checkpointError, maxCheckpointBytes, validateCheckpoint } from './checkpoint.js';
 

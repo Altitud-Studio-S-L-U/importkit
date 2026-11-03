@@ -9,9 +9,11 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 - `importFile` and `validateFile` take `source: fileSource(path)` and a separate `reader` option instead of `source: { path, reader }`.
 - `importFile` takes `checkpointStore` instead of `checkpointPath`. `fileCheckpointStore(path)` keeps the previous behavior, and checkpoint files written by 0.3 still resume.
 - Custom readers yield `{ value, line }` records instead of bare values. A reader that yields anything else fails with `INVALID_OPTIONS`.
+- Checkpoints are saved as version 2, which names the source with `sourceIdentity` instead of `sourceHash`. Checkpoints written by 0.3 are still read and resume; 0.3 cannot read a version 2 checkpoint.
 
 ### Added
 
+- Sources: `source` accepts any `ByteSource`, so an import can read storage other than local files. ImportKit validates what a source returns, counts its bytes and reports their SHA-256.
 - Schemas: `schema` accepts any Standard Schema v1 implementation, such as Zod, Valibot or ArkType. It validates and types each record before `mapRecord`, which becomes optional. Validation issues report the `path` of the invalid field, with the new code `SCHEMA_ERROR`, and `includeSchemaMessages` copies the schema's messages into them.
 - `concurrency` commits up to 16 batches at the same time. The checkpoint advances only over batches whose predecessors are confirmed, and a failure waits for the batches in flight before rejecting.
 - `onProgress` reports the saved progress and the bytes read after every checkpoint save. A callback that throws stops the run with the new code `PROGRESS_ERROR`.
@@ -26,6 +28,7 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 ### Changed
 
 - The JSON Lines reader finds line breaks with `Buffer#indexOf` and reuses one decoder, which reduces parsing time.
+- `validateFile` reads a file twice instead of three times. After a structural error it reads the rest of the file instead of fingerprinting it again.
 - Benchmark reports leave out the CPU model, the memory size, the kernel version, the host name and local paths.
 
 ### Fixed

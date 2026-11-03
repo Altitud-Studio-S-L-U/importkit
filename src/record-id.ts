@@ -5,10 +5,11 @@ type RecordIdentity = Pick<ImportOptions<unknown>, 'reader' | 'importId' | 'tran
 
 /**
  * Destinations deduplicate replayed records by this ID. Changing its inputs or their encoding would make every
- * replayed record look new, so the derivation is part of the public contract.
+ * replayed record look new, so the derivation is part of the public contract. A file's identity is the SHA-256 that
+ * 0.3 used in the same position, so IDs of file imports are unchanged.
  */
-export function recordId(options: RecordIdentity, sourceHash: string, index: number): string {
+export function recordId(options: RecordIdentity, sourceIdentity: string, index: number): string {
   return createHash('sha256').update(JSON.stringify([
-    options.importId, sourceHash, options.reader.id, options.transformVersion, index,
+    options.importId, sourceIdentity, options.reader.id, options.transformVersion, index,
   ])).digest('hex');
 }
