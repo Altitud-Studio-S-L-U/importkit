@@ -3,60 +3,17 @@ import { constants } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
 import { open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
-import { ImportKitError } from './errors.js';
-import type { ImportLimits, ImportOptions } from './types.js';
+import { checkAbort, ImportKitError } from './errors.js';
+import type { ImportLimits } from './types.js';
 
-type FileOptions<T> = Pick<ImportOptions<T>, 'source' | 'importId' | 'transformVersion' | 'mapRecord' | 'limits' | 'signal'>;
-type RecordIdentity = Pick<ImportOptions<unknown>, 'source' | 'importId' | 'transformVersion'>;
-
-const DEFAULT_LIMITS: ImportLimits = Object.freeze({
-  maxSourceBytes: 1_073_741_824,
-  maxRecordBytes: 1_048_576,
-  maxRecords: 10_000_000,
-});
+export interface OpenSource {
+  readonly handle: FileHandle;
+  readonly state: BigIntStats;
+}
 
 export const sourceReadFlags = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
 
-export function positiveInteger(value: number, name: string): void {
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new ImportKitError('INVALID_OPTIONS', `${name} must be a positive safe integer.`);
-  }
-}
-
-function identity(value: unknown, name: string): asserts value is string {
-  if (typeof value !== 'string' || value.trim().length === 0 || Buffer.byteLength(value) > 256) {
-    throw new ImportKitError('INVALID_OPTIONS', `${name} must be a nonempty string of at most 256 UTF-8 bytes.`);
-  }
-}
-
-export function assertFileOptions<T>(options: FileOptions<T>): ImportLimits {
-  if (options === null || typeof options !== 'object') {
-    throw new ImportKitError('INVALID_OPTIONS', 'Import options are required.');
-  }
-  identity(options.importId, 'importId');
-  identity(options.transformVersion, 'transformVersion');
-  if (typeof options.source?.path !== 'string' || options.source.path.length === 0) {
-    throw new ImportKitError('INVALID_OPTIONS', 'A source path is required.');
-  }
-  identity(options.source.reader?.id, 'reader.id');
-  if (typeof options.source.reader.read !== 'function' || typeof options.mapRecord !== 'function') {
-    throw new ImportKitError('INVALID_OPTIONS', 'Reader and mapping callbacks are required.');
-  }
-  const limits: ImportLimits = { ...DEFAULT_LIMITS, ...options.limits };
-  positiveInteger(limits.maxSourceBytes, 'maxSourceBytes');
-  positiveInteger(limits.maxRecordBytes, 'maxRecordBytes');
-  positiveInteger(limits.maxRecords, 'maxRecords');
-  if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) {
-    throw new ImportKitError('INVALID_OPTIONS', 'signal must be an AbortSignal.');
-  }
-  return limits;
-}
-
-export function checkAbort(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) throw new ImportKitError('ABORTED', 'Import cancelled.');
-}
-
-export async function openSource(path: string, maxSourceBytes: number): Promise<{ handle: FileHandle; state: BigIntStats }> {
+export async function openSource(path: string, maxSourceBytes: number): Promise<OpenSource> {
   let handle: FileHandle;
   try {
     handle = await open(path, sourceReadFlags);
@@ -110,10 +67,4 @@ export async function fingerprint(handle: FileHandle, limits: ImportLimits, sign
   const hash = createHash('sha256');
   for await (const chunk of sourceBytes(handle, limits.maxSourceBytes, signal)) hash.update(chunk);
   return hash.digest('hex');
-}
-
-export function recordId(options: RecordIdentity, sourceHash: string, index: number): string {
-  return createHash('sha256').update(JSON.stringify([
-    options.importId, sourceHash, options.source.reader.id, options.transformVersion, index,
-  ])).digest('hex');
 }

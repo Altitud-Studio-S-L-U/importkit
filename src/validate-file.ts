@@ -1,49 +1,35 @@
-import { createHash } from 'node:crypto';
-import { ImportKitError } from './errors.js';
-import { assertFileOptions, assertSourceState, checkAbort, fingerprint, openSource, recordId, sourceBytes } from './file-source.js';
+import { checkAbort, ImportKitError } from './errors.js';
+import { assertSourceState, fingerprint, openSource } from './file-source.js';
+import { assertValidationOptions } from './options.js';
+import { traverseRecords } from './traversal.js';
 import type { ValidationIssue, ValidationOptions, ValidationResult } from './types.js';
 
 /** Validates an immutable local file without opening a destination or checkpoint. */
 export async function validateFile<T>(options: ValidationOptions<T>): Promise<ValidationResult> {
-  const limits = assertFileOptions(options);
-  const maxIssues = options.maxIssues ?? 100;
-  if (!Number.isSafeInteger(maxIssues) || maxIssues < 0 || maxIssues > 10_000) {
-    throw new ImportKitError('INVALID_OPTIONS', 'maxIssues must be an integer from 0 through 10,000.');
-  }
+  const { limits, maxIssues } = assertValidationOptions(options);
   checkAbort(options.signal);
   const { handle, state } = await openSource(options.source.path, limits.maxSourceBytes);
   try {
     const sourceHash = await fingerprint(handle, limits, options.signal);
     await assertSourceState(handle, state);
-    let processedRecords = 0;
     let validRecords = 0;
     let invalidRecords = 0;
     const issues: ValidationIssue[] = [];
     let incomplete = false;
-    const parsedHash = createHash('sha256');
-    async function* verifiedBytes(): AsyncIterable<Uint8Array> {
-      for await (const chunk of sourceBytes(handle, limits.maxSourceBytes, options.signal)) {
-        parsedHash.update(chunk);
-        yield chunk;
-      }
-    }
+    const traversal = traverseRecords(handle, options, limits, sourceHash);
 
     try {
-      for await (const input of options.source.reader.read(verifiedBytes(), limits)) {
-        checkAbort(options.signal);
-        processedRecords++;
-        if (processedRecords > limits.maxRecords) {
-          throw new ImportKitError('LIMIT_EXCEEDED', 'The source exceeds maxRecords.', { recordIndex: processedRecords });
-        }
-        const id = recordId(options, sourceHash, processedRecords);
+      for await (const input of traversal.inputs()) {
+        const index = traversal.visit();
+        const id = traversal.recordId(index);
         try {
-          await options.mapRecord(input, { id, index: processedRecords });
+          await options.mapRecord(input, { id, index });
           validRecords++;
         } catch {
           checkAbort(options.signal);
           invalidRecords++;
           if (issues.length < maxIssues) {
-            issues.push(Object.freeze({ code: 'MAP_ERROR', recordIndex: processedRecords, message: 'Record mapping or validation failed.' }));
+            issues.push(Object.freeze({ code: 'MAP_ERROR', recordIndex: index, message: 'Record mapping or validation failed.' }));
           }
         }
         checkAbort(options.signal);
@@ -56,7 +42,7 @@ export async function validateFile<T>(options: ValidationOptions<T>): Promise<Va
 
     checkAbort(options.signal);
     await assertSourceState(handle, state);
-    if (!incomplete && parsedHash.digest('hex') !== sourceHash) {
+    if (!incomplete && traversal.parsedHash() !== sourceHash) {
       throw new ImportKitError('SOURCE_CHANGED', 'The source bytes changed between fingerprinting and parsing.');
     }
     // Some filesystems do not expose a same-size rewrite through an open handle's
@@ -66,7 +52,7 @@ export async function validateFile<T>(options: ValidationOptions<T>): Promise<Va
     }
     await assertSourceState(handle, state);
     const summary = {
-      sourceHash, processedRecords, validRecords, invalidRecords,
+      sourceHash, processedRecords: traversal.count(), validRecords, invalidRecords,
       issues: Object.freeze(issues), issuesTruncated: invalidRecords > issues.length,
     };
     return incomplete

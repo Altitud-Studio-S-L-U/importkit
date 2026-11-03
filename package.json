@@ -15,7 +15,7 @@
   "homepage": "https://github.com/Altitud-Studio-S-L-U/importkit#readme",
   "keywords": ["import", "csv", "jsonl", "streaming", "checkpoint", "resumable", "typescript", "nodejs"],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
     "demo": "npm run build && node examples/validation.mjs && node examples/recovery.mjs",

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, unlink,
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { acquireCheckpointLock, canonicalCheckpointPath, readCheckpoint, writeCheckpoint } from '../dist/checkpoint.js';
+import { acquireCheckpointLock, canonicalCheckpointPath, readCheckpoint, writeCheckpoint } from '../dist/checkpoints/file-checkpoint.js';
 
 const scratchRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '.tmp');
 const fixture = Object.freeze({
