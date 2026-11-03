@@ -7,6 +7,6 @@ export function assertReaderLimits(limits: ReaderLimits): void {
   }
 }
 
-export function recordSizeError(): ImportKitError {
-  return new ImportKitError('LIMIT_EXCEEDED', 'A serialized record exceeds maxRecordBytes.');
+export function recordSizeError(line: number): ImportKitError {
+  return new ImportKitError('LIMIT_EXCEEDED', 'A serialized record exceeds maxRecordBytes.', { line });
 }

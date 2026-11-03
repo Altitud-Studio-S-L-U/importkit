@@ -97,7 +97,7 @@ test('measurements occur once per new transformed value with its stable context'
       return value.byteLength;
     },
   });
-  assert.deepEqual(measured.map((context) => ({ ...context })), batches.flat().map(({ id, index }) => ({ id, index })));
+  assert.deepEqual(measured.map((context) => ({ ...context })), batches.flat().map(({ id, index }) => ({ id, index, line: index })));
   const result = await importFile({ ...options, measureRecordBytes: () => assert.fail('Confirmed records must not be measured again.') });
   assert.equal(result.resumedFrom, 3);
 });

@@ -8,8 +8,11 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 
 - `importFile` and `validateFile` take `source: fileSource(path)` and a separate `reader` option instead of `source: { path, reader }`.
 - `importFile` takes `checkpointStore` instead of `checkpointPath`. `fileCheckpointStore(path)` keeps the previous behavior, and checkpoint files written by 0.3 still resume.
+- Custom readers yield `{ value, line }` records instead of bare values. A reader that yields anything else fails with `INVALID_OPTIONS`.
 
 ### Added
+
+- Source lines: `mapRecord` and `measureRecordBytes` receive the `line` where each record starts, and validation issues, parse errors and `ImportKitError` report it. A CSV record with line breaks inside quoted fields reports its first line.
 
 - Checkpoint stores: any object with `load()`, `save()` and an optional `lock()` can keep progress, for example in the destination database.
 - `commitBatch` receives `{ checkpoint, signal }`. Writing the checkpoint in the same transaction as the records prevents replays after a lost acknowledgment.

@@ -50,7 +50,7 @@ Fingerprints the source, loads the saved checkpoint, then parses the source, map
 | `limits` | `Partial<ImportLimits>` | Source and record limits. See [Limits](limits.md). |
 | `signal` | `AbortSignal` | Cancels the run. See [Cancellation](#cancellation). |
 
-`mapRecord` and `measureRecordBytes` receive `{ id, index }` for the record. `commitBatch` receives a frozen array of `{ id, index, value }` records and a frozen [`CommitContext`](#commitcontext).
+`mapRecord` and `measureRecordBytes` receive a [`RecordContext`](#importrecord-and-recordcontext), `{ id, index, line }`, for the record. `commitBatch` receives a frozen array of `{ id, index, value }` records and a frozen [`CommitContext`](#commitcontext).
 
 ### Result
 
@@ -87,9 +87,9 @@ It takes `source`, `reader`, `importId`, `transformVersion`, `mapRecord`, `limit
 | `processedRecords` | Records the reader produced. |
 | `validRecords` | Records that passed `mapRecord`. |
 | `invalidRecords` | Records that failed `mapRecord`. `validRecords + invalidRecords` equals `processedRecords`. |
-| `issues` | Up to `maxIssues` entries of `{ code: 'MAP_ERROR', recordIndex, message }`, in source order. |
+| `issues` | Up to `maxIssues` [`ValidationIssue`](#validationissue) entries, in source order. |
 | `issuesTruncated` | `true` when more failures occurred than `issues` holds. |
-| `parseError` | Only when `status` is `'incomplete'`: `{ code: 'PARSE_ERROR', message }`. |
+| `parseError` | Only when `status` is `'incomplete'`: `{ code: 'PARSE_ERROR', message, line }`, where `line` is the line of the malformed record when the reader reports it. |
 
 Issue and parse error messages are constant library text. They never include record values, mapped values or the messages of your exceptions, so a report can be logged or returned to the person who sent the file.
 
@@ -177,17 +177,23 @@ interface ImportRecord<T> {
 interface RecordContext {
   readonly id: string;
   readonly index: number;
+  readonly line?: number;
 }
 ```
 
-`index` is the record's one-based position among the source's records; a CSV header is not a record. `id` is a 64-character hexadecimal string derived from `importId`, the source content, the reader, `transformVersion` and `index`.
+`index` is the record's one-based position among the source's records; a CSV header is not a record. `id` is a 64-character hexadecimal string derived from `importId`, the source content, the reader, `transformVersion` and `index`. `line` is the one-based line of the source where the record starts, present when the reader reports it, as both included readers do. A CSV record with line breaks inside quoted fields spans several lines and reports the first.
 
 ### RecordReader
 
 ```ts
 interface RecordReader {
   readonly id: string;
-  read(chunks: AsyncIterable<Uint8Array>, limits: ReaderLimits): AsyncIterable<unknown>;
+  read(chunks: AsyncIterable<Uint8Array>, limits: ReaderLimits): AsyncIterable<ParsedRecord>;
+}
+
+interface ParsedRecord {
+  readonly value: unknown;
+  readonly line?: number;
 }
 
 interface ReaderLimits {
@@ -212,15 +218,18 @@ interface ImportLimits extends ReaderLimits {
 interface ValidationIssue {
   readonly code: 'MAP_ERROR';
   readonly recordIndex: number;
+  readonly line?: number;
   readonly message: string;
 }
 ```
 
-`ImportOptions<T>`, `ImportResult`, `ValidationOptions<T>`, `ValidationResult` and `FileSource` are also exported and match the tables above.
+`line` is the line where the record starts, when the reader reports it.
+
+`ImportOptions<T>`, `ImportResult`, `ValidationOptions<T>`, `ValidationResult`, `ValidationParseError`, `FileSource` and `ImportKitErrorOptions` are also exported and match the tables above.
 
 ## Errors
 
-Every failure rejects with an `ImportKitError`. Its `code` identifies the failure, `message` is constant library text, `recordIndex` is set when one record is involved, and `cause` holds the underlying error when there is one. A `cause` can contain application data or file content: review it before logging.
+Every failure rejects with an `ImportKitError`. Its `code` identifies the failure, `message` is constant library text, `recordIndex` is set when one record is involved, `line` is the source line where that record starts when the reader reports it, and `cause` holds the underlying error when there is one. A `cause` can contain application data or file content: review it before logging.
 
 | Code | Raised when | What to do |
 | --- | --- | --- |

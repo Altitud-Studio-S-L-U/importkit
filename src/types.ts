@@ -2,10 +2,17 @@ export interface ReaderLimits {
   readonly maxRecordBytes: number;
 }
 
+/** One record decoded by a reader. */
+export interface ParsedRecord {
+  readonly value: unknown;
+  /** One-based line of the source where the record starts, for formats that have lines. */
+  readonly line?: number;
+}
+
 /** A deterministic reader: the same bytes and reader ID must yield the same records. */
 export interface RecordReader {
   readonly id: string;
-  read(chunks: AsyncIterable<Uint8Array>, limits: ReaderLimits): AsyncIterable<unknown>;
+  read(chunks: AsyncIterable<Uint8Array>, limits: ReaderLimits): AsyncIterable<ParsedRecord>;
 }
 
 export interface ImportLimits extends ReaderLimits {
@@ -23,6 +30,8 @@ export interface ImportRecord<T> {
 export interface RecordContext {
   readonly id: string;
   readonly index: number;
+  /** One-based line where the record starts, when the reader reports it. */
+  readonly line?: number;
 }
 
 /** A local file, created with `fileSource()`. It must stay unchanged while a run reads it. */
@@ -97,8 +106,18 @@ export interface ValidationOptions<T> extends Pick<ImportOptions<T>, 'source' | 
 export interface ValidationIssue {
   readonly code: 'MAP_ERROR';
   readonly recordIndex: number;
+  /** One-based line where the record starts, when the reader reports it. */
+  readonly line?: number;
   /** Sanitized library message; application exception messages and causes are excluded. */
   readonly message: string;
+}
+
+export interface ValidationParseError {
+  readonly code: 'PARSE_ERROR';
+  /** Sanitized library message; source values are excluded. */
+  readonly message: string;
+  /** One-based line where the malformed record starts, when the reader reports it. */
+  readonly line?: number;
 }
 
 interface ValidationSummary {
@@ -112,5 +131,5 @@ interface ValidationSummary {
 
 export type ValidationResult = ValidationSummary & (
   | { readonly status: 'valid' | 'invalid' }
-  | { readonly status: 'incomplete'; readonly parseError: { readonly code: 'PARSE_ERROR'; readonly message: string } }
+  | { readonly status: 'incomplete'; readonly parseError: ValidationParseError }
 );

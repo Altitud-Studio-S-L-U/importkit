@@ -73,7 +73,7 @@ if (report.status !== 'valid') console.log(report.invalidRecords, report.issues)
 | `invalid` | The whole file parsed, and at least one record failed `mapRecord`. |
 | `incomplete` | Parsing stopped at a structural error, so the rest of the file was not checked. |
 
-A report counts every failure but keeps at most `maxIssues` of them. It never contains record values or the messages of your exceptions.
+Each issue names the record and the line where it starts, for example `{ code: 'MAP_ERROR', recordIndex: 2, line: 3, message: 'Record mapping or validation failed.' }`. A report counts every failure but keeps at most `maxIssues` of them. It never contains record values or the messages of your exceptions.
 
 ## When a run fails
 

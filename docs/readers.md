@@ -18,6 +18,7 @@ const semicolonSeparated = csvReader({ delimiter: ';' });
 - Every row must have as many fields as the header. Empty, duplicate or reserved headers (`__proto__`, `prototype`, `constructor`) are rejected, and records are created without a prototype.
 - The delimiter is one ASCII character other than a quote, CR, LF or NUL.
 - `maxRecordBytes` counts serialized bytes, including delimiters, quotes and the line terminator, and also applies to the header row.
+- Each record reports the line where it starts. Lines are counted at line feeds, so LF and CRLF files are numbered as editors show them, and a record with line breaks inside quoted fields reports its first line.
 
 ## JSON Lines
 
@@ -32,17 +33,60 @@ Each line holds one JSON value: an object, an array, a string, a number, a boole
 - UTF-8, a byte order mark at the start of the file, CRLF line endings and a last line without a line break are supported.
 - Blank lines, malformed JSON and invalid UTF-8 are rejected.
 - This reader handles JSON Lines (also called NDJSON), not a file holding one large JSON array.
+- Each record reports its line number.
 
 ## Write your own reader
 
 ```ts
 interface RecordReader {
   readonly id: string;
-  read(chunks: AsyncIterable<Uint8Array>, limits: ReaderLimits): AsyncIterable<unknown>;
+  read(chunks: AsyncIterable<Uint8Array>, limits: ReaderLimits): AsyncIterable<ParsedRecord>;
+}
+
+interface ParsedRecord {
+  readonly value: unknown;
+  readonly line?: number;
 }
 ```
 
-`read` receives the source's bytes and yields one value per record. A reader must:
+`read` receives the source's bytes and yields one `{ value, line }` object per record. `value` is what `mapRecord` receives. `line` is the one-based line where the record starts; omit it for formats without lines. ImportKit rejects any other shape with `INVALID_OPTIONS`, including the bare values that readers yielded before 1.0.
+
+This reader yields every line of a UTF-8 text file, such as a list of SKUs. Lines end at LF and hold at most `maxRecordBytes` bytes:
+
+```ts
+import { ImportKitError } from '@altitud-studio/importkit';
+import type { RecordReader } from '@altitud-studio/importkit';
+
+export function lineReader(): RecordReader {
+  return {
+    id: 'lines:v1:utf8-lf',
+    async *read(chunks, limits) {
+      const decoder = new TextDecoder('utf-8', { fatal: true });
+      let pending = '';
+      let line = 1;
+      const assertSize = (text: string): void => {
+        if (Buffer.byteLength(text) > limits.maxRecordBytes) {
+          throw new ImportKitError('LIMIT_EXCEEDED', 'A line exceeds maxRecordBytes.', { line });
+        }
+      };
+      for await (const chunk of chunks) {
+        const lines = (pending + decoder.decode(chunk, { stream: true })).split('\n');
+        pending = lines.pop() ?? '';
+        for (const value of lines) {
+          assertSize(value);
+          yield { value, line: line++ };
+        }
+        // Bound the incomplete last line before reading more.
+        assertSize(pending);
+      }
+      pending += decoder.decode();
+      if (pending.length > 0) yield { value: pending, line };
+    },
+  };
+}
+```
+
+A reader must:
 
 - **Be deterministic.** The same bytes must always produce the same records in the same order. Record IDs and checkpoints rely on it.
 - **Identify its rules in `id`.** Include a version and every option that changes the output, as in `csv:v1:utf8-header:3b` for a semicolon-separated CSV reader. Changing `id` changes every record ID and makes existing checkpoints refuse to resume.

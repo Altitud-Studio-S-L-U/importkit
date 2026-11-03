@@ -30,7 +30,7 @@ async function rows(manifest) {
     for (let index = 0; index < source.length; index += 137) yield source.subarray(index, index + 137);
   }
   const result = [];
-  for await (const value of reader.read(chunks(), { maxRecordBytes: manifest.rowBytes })) result.push(value);
+  for await (const { value } of reader.read(chunks(), { maxRecordBytes: manifest.rowBytes })) result.push(value);
   return result;
 }
 

@@ -7,8 +7,12 @@ async function* pieces(input, size = 3) {
   for (let offset = 0; offset < bytes.length; offset += size) yield bytes.subarray(offset, offset + size);
 }
 
-async function read(reader, input, { size = 3, maxRecordBytes = 1024 } = {}) {
+async function records(reader, input, { size = 3, maxRecordBytes = 1024 } = {}) {
   return Array.fromAsync(reader.read(pieces(input, size), { maxRecordBytes }));
+}
+
+async function read(reader, input, options) {
+  return (await records(reader, input, options)).map((record) => record.value);
 }
 
 test('CSV preserves quoted delimiters, quotes, multiline text, CRLF, BOM, and split UTF-8', async () => {
@@ -116,4 +120,23 @@ test('CSV reader closes its input when the consumer stops early', async () => {
   }
   for await (const _record of csvReader().read(source(), { maxRecordBytes: 32 })) break;
   assert.equal(closed, true);
+});
+
+test('readers report the line where each record starts, counting line breaks inside quoted fields', async () => {
+  const crlf = await records(csvReader(), '\uFEFFid,note\r\n1,"two\r\nlines"\r\n2,b\r\n', { size: 2 });
+  assert.deepEqual(crlf.map(({ line }) => line), [2, 4]);
+  const lf = await records(csvReader(), 'id,note\n1,a\n2,"x\ny\nz"\n3,last', { size: 2 });
+  assert.deepEqual(lf.map(({ line }) => line), [2, 3, 6]);
+  const jsonl = await records(jsonlReader(), '\uFEFF1\r\n2\n3', { size: 1 });
+  assert.deepEqual(jsonl.map(({ value, line }) => [value, line]), [[1, 1], [2, 2], [3, 3]]);
+});
+
+test('reader errors report the line where the failing record starts', async () => {
+  await assert.rejects(read(csvReader(), 'id,id\n1,2\n'), { code: 'PARSE_ERROR', line: 1 });
+  await assert.rejects(read(csvReader(), 'id,note\n1,a\n2\n'), { code: 'PARSE_ERROR', line: 3 });
+  await assert.rejects(read(csvReader(), 'id,note\n1,"a\nb"\n2,"open\nstill open'), { code: 'PARSE_ERROR', line: 4 });
+  await assert.rejects(read(csvReader(), 'id\n1\n12345\n', { maxRecordBytes: 4 }), { code: 'LIMIT_EXCEEDED', line: 3 });
+  await assert.rejects(read(jsonlReader(), '1\n2\n{oops\n'), { code: 'PARSE_ERROR', line: 3 });
+  await assert.rejects(read(jsonlReader(), '1\n\n'), { code: 'PARSE_ERROR', line: 2 });
+  await assert.rejects(read(jsonlReader(), '1\n"long"\n', { maxRecordBytes: 4 }), { code: 'LIMIT_EXCEEDED', line: 2 });
 });
