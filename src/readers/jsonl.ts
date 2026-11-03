@@ -26,7 +26,7 @@ export function jsonlReader(): RecordReader {
         }
         parts = [];
         bytes = 0;
-        if (firstLine) text = text.replace(/^﻿/u, '');
+        if (firstLine) text = text.replace(/^\uFEFF/u, '');
         firstLine = false;
         if (text.endsWith('\r')) text = text.slice(0, -1);
         if (text.trim().length === 0) throw new ImportKitError('PARSE_ERROR', 'JSON Lines input must not contain empty records.');
