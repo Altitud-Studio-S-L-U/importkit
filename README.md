@@ -52,7 +52,13 @@ The recovery demo imports five fictional orders into a local SQLite database. It
 
 Expected recovery result: **seven delivery attempts, five stored records, two deduplicated replays**. This is a fault simulation, not a benchmark or a claim of exactly-once delivery. The example uses Node's built-in `node:sqlite`; Node versions that label it experimental may print a warning. The demos remove their own temporary files after running. Run either separately with `npm run demo:validation` or `npm run demo:recovery`.
 
-The package is available from source; it has **not been published to npm**. To consume a local build:
+Versioned npm-compatible tarballs are distributed through [GitHub Releases](https://github.com/Altitud-Studio-S-L-U/importkit/releases). Download the release asset and install it in your application:
+
+```sh
+npm install ./altitud-studio-importkit-0.2.0.tgz
+```
+
+To build a tarball from a source checkout:
 
 ```sh
 npm run build

@@ -4,6 +4,7 @@
   "description": "Validate and resume bounded file imports for Node.js. Stream records, report issues, and recover with stable IDs.",
   "type": "module",
   "license": "MIT",
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "author": "Altitud Studio SLU (https://altitudstudio.ad)",
   "engines": { "node": ">=24" },
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
