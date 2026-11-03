@@ -6,6 +6,7 @@ Everything below is exported by `@altitud-studio/importkit` and available throug
 - [importFile](#importfileoptions)
 - [validateFile](#validatefileoptions)
 - [fileSource](#filesourcepath)
+- [httpSource](#httpsourceurl-options)
 - [csvReader and jsonlReader](#csvreader-and-jsonlreader)
 - [fileCheckpointStore](#filecheckpointstorepath)
 - [Types](#types)
@@ -17,7 +18,7 @@ Everything below is exported by `@altitud-studio/importkit` and available throug
 
 | Term | Meaning |
 | --- | --- |
-| Source | Where the bytes come from: `fileSource()` or your own `ByteSource`. Its content must not change while a run reads it. |
+| Source | Where the bytes come from: `fileSource()`, `httpSource()` or your own `ByteSource`. Its content must not change while a run reads it. |
 | Reader | Decodes the source's bytes into records: `csvReader()`, `jsonlReader()` or your own. |
 | Record | One decoded row or line. The schema and `mapRecord` turn it into the value your destination receives. |
 | Batch | The records passed to one `commitBatch` call. |
@@ -111,6 +112,18 @@ Selects a local file as the source. Throws `INVALID_OPTIONS` at once for an empt
 
 `FileSource` is a `ByteSource` with a `path` property. Any other object that implements [`ByteSource`](#bytesource) can be passed as `source`.
 
+## httpSource(url, options)
+
+```ts
+function httpSource(url: string | URL, options?: HttpSourceOptions): ByteSource;
+
+interface HttpSourceOptions {
+  readonly headers?: Readonly<Record<string, string>>;
+}
+```
+
+Reads a file over HTTP or HTTPS with one `GET` request per run. Throws `INVALID_OPTIONS` at once for a URL that is not absolute `http` or `https`, that carries a user name or password, or for invalid header names or values. `headers` are sent with every request and never appear in errors. [Read a file over HTTP](sources.md#read-a-file-over-http) lists what the response must provide.
+
 ## csvReader and jsonlReader
 
 ```ts
@@ -156,7 +169,7 @@ interface Checkpoint {
 }
 ```
 
-A checkpoint holds identity and progress, never record data. Store it as JSON and return it unchanged. `sourceIdentity` is the source's `identity`: the SHA-256 of a file's content. ImportKit also reads the version 1 checkpoints that 0.3 wrote, whose `sourceHash` field becomes `sourceIdentity`, and saves version 2 from then on.
+A checkpoint holds identity and progress, never record data. Store it as JSON and return it unchanged. `sourceIdentity` is the source's `identity`: the SHA-256 of a file's content, or `etag:` followed by the ETag of an HTTP response. ImportKit also reads the version 1 checkpoints that 0.3 wrote, whose `sourceHash` field becomes `sourceIdentity`, and saves version 2 from then on.
 
 ### ByteSource
 
@@ -271,7 +284,7 @@ interface ValidationIssue {
 
 `schema` accepts any object or function that implements version 1 of the [Standard Schema](https://standardschema.dev) interface: a `~standard` property with `version: 1` and a `validate` function that returns, or resolves to, `{ value }` or `{ issues }`. Zod, Valibot and ArkType schemas implement it. ImportKit reads the issues' `path` and, with `includeSchemaMessages`, their `message`.
 
-`ImportOptions<I, T>`, `ImportResult`, `ValidationOptions<I, T>`, `ValidationResult`, `ValidationParseError`, `FileSource` and `ImportKitErrorOptions` are also exported and match the tables above.
+`HttpSourceOptions`, `ImportOptions<I, T>`, `ImportResult`, `ValidationOptions<I, T>`, `ValidationResult`, `ValidationParseError`, `FileSource` and `ImportKitErrorOptions` are also exported and match the tables above.
 
 ## Errors
 
@@ -280,7 +293,7 @@ Every failure rejects with an `ImportKitError`. Its `code` identifies the failur
 | Code | Raised when | What to do |
 | --- | --- | --- |
 | `INVALID_OPTIONS` | An option is missing, malformed or out of range, the source is the checkpoint file or its lock, or a reader yielded something other than `{ value, line }` records. | Fix the call or the reader. |
-| `SOURCE_ERROR` | The source cannot be opened, inspected, read or closed. | Check the path and permissions, then run again. |
+| `SOURCE_ERROR` | The source cannot be opened, inspected, read or closed, or an HTTP response lacks a strong ETag, a Content-Length or status 200. | Check the path, the permissions or the URL, then run again. |
 | `SOURCE_CHANGED` | The source changed during the run, or produced more or fewer bytes than its size. | Import an unchanging copy. |
 | `LIMIT_EXCEEDED` | A source, record, batch or checkpoint value exceeds its limit. | Reject the file or raise the limit. |
 | `PARSE_ERROR` | The reader found a structural error. | Reject or correct the file. |
