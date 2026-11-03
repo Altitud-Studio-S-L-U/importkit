@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { csvReader, validateFile } from '../dist/index.js';
+import { csvReader, fileSource, validateFile } from '../dist/index.js';
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
 const scratchRoot = join(exampleDirectory, '..', '.tmp');
@@ -14,7 +14,8 @@ try {
   const header = 'order_id,sku,units\n';
   await writeFile(sourcePath, `${header}DEMO-001,SKU-A,2\nDEMO-002,SKU-B,0\nDEMO-003,SKU-C,-1\nDEMO-004,SKU-D,3\n`);
   const options = {
-    source: { path: sourcePath, reader: csvReader() },
+    source: fileSource(sourcePath),
+    reader: csvReader(),
     importId: 'fictional-order-validation',
     transformVersion: 'orders-v1',
     maxIssues: 1,

@@ -1,7 +1,7 @@
 import { ImportKitError } from './errors.js';
 import type { ImportLimits, ImportOptions, RecordContext, ValidationOptions } from './types.js';
 
-type FileOptions<T> = Pick<ImportOptions<T>, 'source' | 'importId' | 'transformVersion' | 'mapRecord' | 'limits' | 'signal'>;
+type FileOptions<T> = Pick<ImportOptions<T>, 'source' | 'reader' | 'importId' | 'transformVersion' | 'mapRecord' | 'limits' | 'signal'>;
 
 export interface ByteBudget<T> {
   readonly maxBatchBytes: number;
@@ -44,10 +44,13 @@ function assertFileOptions<T>(options: FileOptions<T>): ImportLimits {
   identity(options.importId, 'importId');
   identity(options.transformVersion, 'transformVersion');
   if (typeof options.source?.path !== 'string' || options.source.path.length === 0) {
-    throw new ImportKitError('INVALID_OPTIONS', 'A source path is required.');
+    throw new ImportKitError('INVALID_OPTIONS', 'A source created with fileSource(path) is required.');
   }
-  identity(options.source.reader?.id, 'reader.id');
-  if (typeof options.source.reader.read !== 'function' || typeof options.mapRecord !== 'function') {
+  if (options.reader === undefined && 'reader' in options.source) {
+    throw new ImportKitError('INVALID_OPTIONS', 'Pass the reader as its own option: { source: fileSource(path), reader: csvReader() }.');
+  }
+  identity(options.reader?.id, 'reader.id');
+  if (typeof options.reader.read !== 'function' || typeof options.mapRecord !== 'function') {
     throw new ImportKitError('INVALID_OPTIONS', 'Reader and mapping callbacks are required.');
   }
   const limits: ImportLimits = { ...DEFAULT_LIMITS, ...options.limits };

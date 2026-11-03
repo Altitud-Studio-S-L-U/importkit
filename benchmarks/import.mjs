@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { release } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { importFile, jsonlReader, validateFile } from '../dist/index.js';
+import { fileSource, importFile, jsonlReader, validateFile } from '../dist/index.js';
 
 const rows = Number(process.argv[2] ?? 100_000);
 const batchSize = Number(process.argv[3] ?? 1_000);
@@ -61,7 +61,8 @@ try {
   sourceHandle = undefined;
   const sourceBytes = (await stat(sourcePath)).size;
   const options = {
-    source: { path: sourcePath, reader: jsonlReader() },
+    source: fileSource(sourcePath),
+    reader: jsonlReader(),
     importId: 'synthetic-benchmark',
     transformVersion: 'orders-v1',
     mapRecord(input, { index }) {

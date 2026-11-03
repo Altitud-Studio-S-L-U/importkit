@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, writeFile, rm, mkdir } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { csvReader, importFile, ImportKitError, jsonlReader, validateFile } from '../dist/index.js';
+import { csvReader, fileSource, importFile, ImportKitError, jsonlReader, validateFile } from '../dist/index.js';
 
 async function fixture(t, content = '{"id":1}\n{"id":2}\n') {
   const directory = await mkdtemp(join(tmpdir(), 'importkit-validation-'));
@@ -15,7 +15,8 @@ async function fixture(t, content = '{"id":1}\n{"id":2}\n') {
     directory,
     path,
     options: {
-      source: { path, reader: jsonlReader() },
+      source: fileSource(path),
+      reader: jsonlReader(),
       importId: 'synthetic-validation',
       transformVersion: 'v1',
       mapRecord: (input) => input,
@@ -26,7 +27,7 @@ async function fixture(t, content = '{"id":1}\n{"id":2}\n') {
 test('valid JSONL and CSV return complete bounded summaries', async (t) => {
   for (const [content, reader] of [['{"id":1}\n{"id":2}\n', jsonlReader()], ['id\n1\n2\n', csvReader()]]) {
     const { options } = await fixture(t, content);
-    const result = await validateFile({ ...options, source: { ...options.source, reader } });
+    const result = await validateFile({ ...options, reader });
     assert.deepEqual(result, {
       status: 'valid', sourceHash: createHash('sha256').update(content).digest('hex'),
       processedRecords: 2, validRecords: 2, invalidRecords: 0, issues: [], issuesTruncated: false,
@@ -69,7 +70,7 @@ test('CSV issue ordinals count parsed records rather than physical lines', async
   const { options } = await fixture(t, 'id,note\n1,"first\nsecond"\n2,invalid\n');
   const result = await validateFile({
     ...options,
-    source: { ...options.source, reader: csvReader() },
+    reader: csvReader(),
     mapRecord: (input) => {
       if (input.id === '2') throw new Error('Invalid synthetic record.');
       return input;
@@ -95,7 +96,7 @@ test('fatal parsing reports an incomplete traversal and does not invent a recove
 
 test('a fatal CSV error and custom decoder exception both return incomplete results', async (t) => {
   const { options } = await fixture(t, 'id,note\n1,"unterminated');
-  assert.equal((await validateFile({ ...options, source: { ...options.source, reader: csvReader() } })).status, 'incomplete');
+  assert.equal((await validateFile({ ...options, reader: csvReader() })).status, 'incomplete');
   const reader = {
     id: 'synthetic-decoder:v1',
     async *read(chunks) {
@@ -103,7 +104,7 @@ test('a fatal CSV error and custom decoder exception both return incomplete resu
       throw new Error('Private decoder context.');
     },
   };
-  const result = await validateFile({ ...options, source: { ...options.source, reader } });
+  const result = await validateFile({ ...options, reader });
   assert.equal(result.status, 'incomplete');
   assert.doesNotMatch(JSON.stringify(result), /Private decoder context/u);
 });
@@ -189,7 +190,7 @@ test('cancellation before opening the source and during mapping throws ABORTED',
   stopped.abort();
   await assert.rejects(validateFile({
     ...options, signal: stopped.signal,
-    source: { ...options.source, path: join(directory, 'missing') },
+    source: fileSource(join(directory, 'missing')),
     mapRecord: () => assert.fail('Aborted validation must not map.'),
   }), { code: 'ABORTED' });
   for (const rejectMapping of [false, true]) {
@@ -210,7 +211,7 @@ test('missing, nonregular, and changed sources remain operational errors', async
   const folder = join(directory, 'folder');
   await mkdir(folder);
   for (const sourcePath of [folder, join(directory, 'missing')]) {
-    await assert.rejects(validateFile({ ...options, source: { ...options.source, path: sourcePath } }), { code: 'SOURCE_ERROR' });
+    await assert.rejects(validateFile({ ...options, source: fileSource(sourcePath) }), { code: 'SOURCE_ERROR' });
   }
   let changed = false;
   await assert.rejects(validateFile({
@@ -228,7 +229,7 @@ test('operational errors from a reader are propagated without becoming incomplet
     id: 'operational-failure:v1',
     async *read() { throw new ImportKitError('SOURCE_ERROR', 'Synthetic source failure.'); },
   };
-  await assert.rejects(validateFile({ ...options, source: { ...options.source, reader } }), { code: 'SOURCE_ERROR' });
+  await assert.rejects(validateFile({ ...options, reader }), { code: 'SOURCE_ERROR' });
 });
 
 test('invalid validation options are rejected explicitly', async (t) => {
@@ -238,4 +239,13 @@ test('invalid validation options are rejected explicitly', async (t) => {
   }
   await assert.rejects(validateFile({ ...options, mapRecord: null }), { code: 'INVALID_OPTIONS' });
   await assert.rejects(validateFile(null), { code: 'INVALID_OPTIONS' });
+});
+
+test('validation rejects the 0.3 source shape with guidance', async (t) => {
+  const { options, path } = await fixture(t);
+  const { reader, ...withoutReader } = options;
+  await assert.rejects(validateFile({ ...withoutReader, source: { path, reader } }), {
+    code: 'INVALID_OPTIONS',
+    message: /\{ source: fileSource\(path\), reader: csvReader\(\) \}/u,
+  });
 });
