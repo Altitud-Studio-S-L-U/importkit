@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, open, readFile, rm, stat } from 'node:fs/promises';
-import { availableParallelism, cpus, release, totalmem } from 'node:os';
+import { availableParallelism } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -184,8 +184,9 @@ export async function readCgroup() {
         values[name] = null;
       }
     }
-    return { available: true, path: membershipPath, ...values };
-  } catch (error) { return { available: false, reason: error.message }; }
+    // The membership path names the user's session and unit, so reports keep only the limits and counters.
+    return { available: true, ...values };
+  } catch (error) { return { available: false, reason: `Unable to read the cgroup v2 memory controller (${error.code ?? error.name}).` }; }
 }
 
 function cgroupIsEnforced(cgroup, options) {
@@ -385,11 +386,13 @@ export async function runBenchmark(options) {
   const successful = !failure && !cleanup.error && phases.length > 0 && phases.every((phase) => phase.status === 'completed'
     && phase.budget.rssWithinTarget && phase.budget.sampledHeapUsedWithinTarget
     && (options.requireCgroup ? phase.budget.oomEventsZero === true : phase.budget.oomEventsZero !== false));
+  // Reports are published as evidence, so they leave out local paths; JSON drops undefined fields.
+  const reportedOptions = { ...options, workDir: undefined };
+  const reportedSource = manifest === undefined ? undefined : { ...manifest, path: undefined };
   return {
     schemaVersion: 1, benchmark: 'importkit-large-files', status: successful ? 'passed' : 'failed', startedAt, finishedAt: new Date().toISOString(),
-    ...(failure ? { error: failure } : {}), options, source: manifest, phases, cleanup, cgroup: { before: cgroupBefore, after: cgroupAfter },
-    machine: { platform: process.platform, architecture: process.arch, kernel: release(), logicalCpuCount: cpus().length,
-      availableParallelism: availableParallelism(), cpuModel: cpus()[0]?.model ?? null, systemTotalMemoryBytes: totalmem(), node: process.version },
+    ...(failure ? { error: failure } : {}), options: reportedOptions, source: reportedSource, phases, cleanup, cgroup: { before: cgroupBefore, after: cgroupAfter },
+    machine: { platform: process.platform, architecture: process.arch, availableParallelism: availableParallelism(), node: process.version },
     methodology: {
       units: 'Source bytes and GB are decimal; MiB=1048576 bytes; all memory values are bytes. maxRSS from Node KiB is converted to bytes.',
       processIsolation: 'One fresh Node process per phase; no record or destination state is reused between validate and import.',
@@ -401,6 +404,7 @@ export async function runBenchmark(options) {
       workload: 'Deterministic ASCII synthetic records. Last two records split the remainder for an exact byte size. Does not represent every CSV shape, storage system, or transformation.',
       destination: 'Simulated commit acknowledgment with bounded strict order/value/count/digest checks. No real database or durable destination; ImportKit checkpoints still use the real filesystem.',
       cleanup: 'Only the newly created large-files-* run directory is removed after all requested phases; generated source is retained until then.',
+      reporting: 'The report omits the CPU model, memory size, kernel version, host name, local paths and cgroup paths, so it can be published.',
     },
   };
 }

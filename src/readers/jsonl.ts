@@ -8,6 +8,8 @@ export function jsonlReader(): RecordReader {
     id: 'jsonl:v1:utf8-strict',
     async *read(chunks, limits) {
       assertReaderLimits(limits);
+      // Each decode call is complete, so one decoder serves every line.
+      const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
       let parts: Uint8Array[] = [];
       let bytes = 0;
       let line = 1;
@@ -21,7 +23,7 @@ export function jsonlReader(): RecordReader {
       const readLine = (): ParsedRecord => {
         let text: string;
         try {
-          text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(parts, bytes));
+          text = decoder.decode(parts.length === 1 ? parts[0] : Buffer.concat(parts, bytes));
         } catch {
           throw new ImportKitError('PARSE_ERROR', 'Input must contain valid UTF-8.', { line });
         }
@@ -41,15 +43,16 @@ export function jsonlReader(): RecordReader {
       };
 
       for await (const chunk of chunks) {
+        // Buffer#indexOf finds line feeds natively; a UTF-8 multibyte sequence never contains the byte 10.
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
         let offset = 0;
-        for (let index = 0; index < chunk.byteLength; index++) {
-          if (chunk[index] !== 10) continue;
-          append(chunk.subarray(offset, index));
+        for (let index = buffer.indexOf(10); index !== -1; index = buffer.indexOf(10, offset)) {
+          append(buffer.subarray(offset, index));
           if (bytes + 1 > limits.maxRecordBytes) throw recordSizeError(line);
           yield readLine();
           offset = index + 1;
         }
-        append(chunk.subarray(offset));
+        append(buffer.subarray(offset));
       }
       if (bytes > 0) yield readLine();
     },

@@ -21,6 +21,12 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 - `fileSource()`, `fileCheckpointStore()`, and the `Checkpoint`, `CheckpointStore`, `CommitContext` and `FileSource` types.
 - The package loads with `require()` as well as `import`.
 - A transactional SQLite example, `npm run demo:transactional`.
+- `npm run benchmark:throughput`, which measures how `concurrency` scales with a destination that waits on every batch.
+
+### Changed
+
+- The JSON Lines reader finds line breaks with `Buffer#indexOf` and reuses one decoder, which reduces parsing time.
+- Benchmark reports leave out the CPU model, the memory size, the kernel version, the host name and local paths.
 
 ### Fixed
 

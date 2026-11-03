@@ -48,7 +48,32 @@ npm run benchmark -- 100000 1000
 
 The arguments are the number of records, from 100,000 to 10,000,000, and the batch size, from 1 to 10,000. The [benchmark script](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/benchmarks/import.mjs) generates deterministic JSON Lines, validates them, then imports them into a local JSON Lines file with an `fsync` per batch and real checkpoints. It measures a fresh run; its destination does not deduplicate replays, which the recovery demos cover instead.
 
-The JSON report lists the Node.js version, the platform, input and output bytes, the source hash, record and batch counts, the time of each phase, sampled resident memory and heap use, and the process's peak resident memory. Generating the input is excluded from the timings, and validation runs before the import in the same process without clearing file system caches. Memory samples are observations, not the absolute peak.
+The JSON report lists the Node.js version, the platform, the number of logical cores, input and output bytes, the source hash, record and batch counts, the time of each phase, sampled resident memory and heap use, and the process's peak resident memory. Generating the input is excluded from the timings, and validation runs before the import in the same process without clearing file system caches. Memory samples are observations, not the absolute peak.
+
+Every benchmark report leaves out the CPU model, the memory size, the kernel version, the host name and local paths, so it can be published as it is.
+
+## Commit batches concurrently
+
+When the destination's latency dominates each batch, `concurrency` multiplies throughput. The [throughput benchmark](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/benchmarks/throughput.mjs) imports 20,000 synthetic JSON Lines records in 200 batches of 100 into a destination that waits a fixed time per batch, once for each `concurrency` of 1, 2, 4 and 8. It keeps checkpoints in memory, so that file system flushes do not mask the effect.
+
+```sh
+npm run benchmark:throughput -- 20
+```
+
+The argument is the destination's wait per batch, from 1 to 1,000 milliseconds. The criterion, set before measuring, requires four batches in flight to import at least three times as many records per second as one, and the script exits with a failure status when it is not met.
+
+### Results for ImportKit 1.0.0
+
+Three runs on Node.js 24.11.1, Windows x64 with 16 logical cores, with a wait of 20 ms per batch. At a concurrency of 1 each batch took about 30 ms: the wait rounds up to the resolution of Windows timers, and parsing, mapping and checkpoints add the rest.
+
+| `concurrency` | Records per second | Speedup over 1 |
+| ---: | ---: | ---: |
+| 1 | 3,243–3,337 | 1 |
+| 2 | 6,418–6,644 | 1.95–1.99 |
+| 4 | 12,494–13,184 | 3.76–3.95 |
+| 8 | 24,005–25,043 | 7.22–7.72 |
+
+Every run met the criterion. The figures show how throughput scales when the destination only waits; a real database also limits concurrency through its connections, locks and disk.
 
 ## Import 1 GB and 10 GB files
 
