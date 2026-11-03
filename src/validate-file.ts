@@ -48,20 +48,14 @@ async function validateOpenSource<I, T>(
       incomplete = true;
       if (error instanceof ImportKitError) parseErrorLine = error.line;
     }
-    // Read what the reader left, so the hash covers every byte. After a structural error a source with a
-    // known SHA-256 skips this: its content is confirmed by reading it again below.
-    if (!incomplete || source.sha256 === undefined) await traversal.drain();
+    // Read what the reader left, so that the hash covers every byte even after a structural error.
+    await traversal.drain();
   }, traversal.close);
 
   checkAbort(options.signal);
-  let sourceHash: string;
-  if (source.sha256 === undefined) {
-    sourceHash = traversal.contentHash();
-  } else {
-    sourceHash = source.sha256;
-    if (!incomplete && traversal.contentHash() !== sourceHash) {
-      throw new ImportKitError('SOURCE_CHANGED', 'The source bytes changed between fingerprinting and parsing.');
-    }
+  const sourceHash = traversal.contentHash();
+  if (source.sha256 !== undefined && sourceHash !== source.sha256) {
+    throw new ImportKitError('SOURCE_CHANGED', 'The source bytes changed between fingerprinting and parsing.');
   }
   // A report describes the content as it still is, however long the callbacks took.
   await source.assertContentUnchanged();

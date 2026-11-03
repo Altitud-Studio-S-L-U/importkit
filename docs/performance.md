@@ -26,7 +26,7 @@ These bounds assume decoding linear in the input. Callbacks, database work and f
 ## Reads
 
 - An import of a file reads about `2N` bytes: one pass to fingerprint it, and one to parse it while hashing it again.
-- A validation of a file reads `3N`: fingerprint, parse, and a final fingerprint after the callbacks. The final pass catches rewrites of the same size even where file timestamps lag. A structural error stops the parse early, but both fingerprints still read the whole file.
+- A validation of a file reads `3N`: fingerprint, parse, and a final fingerprint after the callbacks. The final pass catches rewrites of the same size even where file timestamps lag. After a structural error the rest of the file is still read and hashed, so the total stays the same.
 - Validating and then importing therefore reads `5N`. File system caches make the passes cheaper, but they remain separate reads. A custom source whose identity needs no fingerprint, such as one based on an ETag, is read once per run, and once more to its end after a structural error.
 - Resuming parses the whole source again. It skips mapping and delivery for confirmed records, but the reads do not shrink with the remaining work.
 - A checkpoint holds fixed metadata of at most 16 KiB, never a list of records. A successful run saves it `B + O(1)` times.

@@ -18,17 +18,6 @@ export interface GuardedSource {
   close(): Promise<void>;
 }
 
-function isOpenedSource(value: unknown): value is OpenedSource {
-  if (typeof value !== 'object' || value === null) return false;
-  const opened = value as Partial<Record<keyof OpenedSource, unknown>>;
-  return typeof opened.identity === 'string' && opened.identity.length > 0 && opened.identity.length <= 512
-    && Number.isSafeInteger(opened.size) && (opened.size as number) >= 0
-    && (opened.sha256 === undefined || (typeof opened.sha256 === 'string' && /^[a-f0-9]{64}$/u.test(opened.sha256)))
-    && typeof opened.bytes === 'function'
-    && (opened.assertUnchanged === undefined || typeof opened.assertUnchanged === 'function')
-    && (opened.close === undefined || typeof opened.close === 'function');
-}
-
 async function sourceCall<R>(failure: string, operation: () => Promise<R>): Promise<R> {
   try {
     return await operation();
@@ -38,14 +27,14 @@ async function sourceCall<R>(failure: string, operation: () => Promise<R>): Prom
   }
 }
 
-async function* countedBytes(opened: OpenedSource, signal: AbortSignal | undefined): AsyncIterable<Uint8Array> {
+async function* countedBytes(read: () => AsyncIterable<Uint8Array>, size: number, signal: AbortSignal | undefined): AsyncIterable<Uint8Array> {
   let count = 0;
   try {
-    for await (const chunk of opened.bytes()) {
+    for await (const chunk of read()) {
       checkAbort(signal);
       if (!(chunk instanceof Uint8Array)) throw new ImportKitError('INVALID_OPTIONS', 'A source must yield Uint8Array chunks.');
       count += chunk.byteLength;
-      if (count > opened.size) throw new ImportKitError('SOURCE_CHANGED', 'The source produced more bytes than its size.');
+      if (count > size) throw new ImportKitError('SOURCE_CHANGED', 'The source produced more bytes than its size.');
       yield chunk;
     }
   } catch (error) {
@@ -53,7 +42,7 @@ async function* countedBytes(opened: OpenedSource, signal: AbortSignal | undefin
     checkAbort(signal);
     throw new ImportKitError('SOURCE_ERROR', 'Unable to read the source.', { cause: error });
   }
-  if (count !== opened.size) throw new ImportKitError('SOURCE_CHANGED', 'The source ended before its size.');
+  if (count !== size) throw new ImportKitError('SOURCE_CHANGED', 'The source ended before its size.');
 }
 
 /**
@@ -63,34 +52,41 @@ async function* countedBytes(opened: OpenedSource, signal: AbortSignal | undefin
 export async function openSource(source: ByteSource, limits: ImportLimits, signal: AbortSignal | undefined): Promise<GuardedSource> {
   const context = signal === undefined ? { maxBytes: limits.maxSourceBytes } : { maxBytes: limits.maxSourceBytes, signal };
   const opened: unknown = await sourceCall('Unable to open the source.', () => source.open(Object.freeze(context)));
+  // Every member is read once: a getter could otherwise pass validation and then report another size or identity.
+  const { identity, size, sha256, bytes, assertUnchanged, close } =
+    (typeof opened === 'object' && opened !== null ? opened : {}) as Partial<Record<keyof OpenedSource, unknown>>;
   let closed = false;
-  const close = async (): Promise<void> => {
+  const release = async (): Promise<void> => {
     if (closed) return;
     closed = true;
-    const release = (opened as Partial<OpenedSource> | null)?.close;
-    if (typeof release === 'function') await sourceCall('Unable to close the source.', () => release.call(opened));
+    if (typeof close === 'function') await sourceCall('Unable to close the source.', async () => { await close.call(opened); });
   };
 
-  if (!isOpenedSource(opened)) {
-    await close();
+  if (typeof identity !== 'string' || identity.length === 0 || identity.length > 512
+    || typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0
+    || (sha256 !== undefined && (typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(sha256)))
+    || typeof bytes !== 'function'
+    || (assertUnchanged !== undefined && typeof assertUnchanged !== 'function')
+    || (close !== undefined && typeof close !== 'function')) {
+    await release();
     throw new ImportKitError('INVALID_OPTIONS', 'A source must open to { identity, size, bytes() }, with an identity of 1 to 512 characters.');
   }
-  if (opened.size > limits.maxSourceBytes) {
-    await close();
+  if (size > limits.maxSourceBytes) {
+    await release();
     throw new ImportKitError('LIMIT_EXCEEDED', 'The source exceeds maxSourceBytes.');
   }
-  const assertUnchanged = async (): Promise<void> => {
-    const check = opened.assertUnchanged;
-    if (check !== undefined) await sourceCall('Unable to check the source.', () => check.call(opened));
+  const check = async (): Promise<void> => {
+    if (typeof assertUnchanged === 'function') await sourceCall('Unable to check the source.', async () => { await assertUnchanged.call(opened); });
   };
+  const file = opened instanceof OpenedFile ? opened : undefined;
   return {
-    identity: opened.identity,
-    size: opened.size,
-    sha256: opened.sha256,
-    fileState: opened instanceof OpenedFile ? opened.state : undefined,
-    bytes: () => countedBytes(opened, signal),
-    assertUnchanged,
-    assertContentUnchanged: () => opened instanceof OpenedFile ? opened.assertContentUnchanged() : assertUnchanged(),
-    close,
+    identity,
+    size,
+    sha256: sha256 as string | undefined,
+    fileState: file?.state,
+    bytes: () => countedBytes(() => bytes.call(opened) as AsyncIterable<Uint8Array>, size, signal),
+    assertUnchanged: check,
+    assertContentUnchanged: () => file === undefined ? check() : file.assertContentUnchanged(),
+    close: release,
   };
 }

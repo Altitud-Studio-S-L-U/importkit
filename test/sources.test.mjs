@@ -175,3 +175,31 @@ test('a failing close or lock release does not hide the error that ended the run
   await assert.rejects(importFile({ ...failing, source: bufferSource().source, checkpointStore: store }), { code: 'COMMIT_ERROR' });
   await assert.rejects(importFile({ ...options(bufferSource().source), checkpointStore: store }), { code: 'CHECKPOINT_ERROR', message: 'Unable to release the checkpoint store lock.' });
 });
+
+test('a source is read once at open, so a getter cannot report a size or identity that was not validated', async () => {
+  const bytes = Buffer.from(content);
+  let reads = 0;
+  const source = {
+    async open() {
+      return {
+        identity: 'memory:growing',
+        get size() {
+          reads++;
+          return reads === 1 ? bytes.byteLength : Number.MAX_SAFE_INTEGER;
+        },
+        async *bytes() {
+          yield bytes;
+          yield bytes;
+        },
+      };
+    },
+  };
+  await assert.rejects(importFile({ ...options(source), limits: { maxSourceBytes: 64 } }), { code: 'SOURCE_CHANGED' });
+  assert.equal(reads, 1);
+});
+
+test('a declared SHA-256 is checked even when validation stops at a structural error', async () => {
+  const malformed = '{"order":1}\n{"order":\n{"order":3}\n';
+  const { source } = bufferSource(malformed, { sha256: 'e'.repeat(64) });
+  await assert.rejects(validateFile(options(source)), { code: 'SOURCE_CHANGED' });
+});
