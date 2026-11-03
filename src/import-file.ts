@@ -8,7 +8,7 @@ import { assertResumable, initialCheckpoint } from './checkpoints/checkpoint.js'
 import type { Checkpoint } from './checkpoints/checkpoint.js';
 import { acquireCheckpointLock, canonicalCheckpointPath, readCheckpoint, writeCheckpoint } from './checkpoints/file-checkpoint.js';
 import { checkAbort, hasErrorCode, ImportKitError } from './errors.js';
-import { assertSourceState, fingerprint, openSource, sourceReadFlags } from './file-source.js';
+import { assertSourceState, closeSource, fingerprint, openSource, sourceReadFlags } from './file-source.js';
 import type { OpenSource } from './file-source.js';
 import { assertImportOptions } from './options.js';
 import type { ImportSettings } from './options.js';
@@ -70,7 +70,7 @@ export async function importFile<T>(options: ImportOptions<T>): Promise<ImportRe
       await assertSeparateFiles(source.state, [checkpointPath, lockPath]);
       return await importOpenSource(options, settings, checkpointPath, source);
     } finally {
-      await source.handle.close();
+      await closeSource(source.handle);
     }
   } finally {
     await release();
@@ -142,6 +142,7 @@ async function importOpenSource<T>(
       if (batch.isFull()) await commit(false);
     }
   } catch (error) {
+    // Callbacks, limits, source checks and persistence raise ImportKitError, so any other error came from the reader.
     if (error instanceof ImportKitError) throw error;
     throw new ImportKitError('PARSE_ERROR', 'The reader failed to produce records.', { cause: error, recordIndex: traversal.count() + 1 });
   }
