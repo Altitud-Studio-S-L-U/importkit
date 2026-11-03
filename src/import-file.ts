@@ -84,6 +84,7 @@ async function importOpenSource<T>(
       try {
         await options.commitBatch(records, context);
       } catch (error) {
+        checkAbort(options.signal);
         throw new ImportKitError('COMMIT_ERROR', 'Destination batch failed; its uncheckpointed records may be replayed.', { cause: error, recordIndex: first.index });
       }
     }
@@ -104,6 +105,7 @@ async function importOpenSource<T>(
       try {
         value = await options.mapRecord(input, { id, index });
       } catch (error) {
+        checkAbort(options.signal);
         throw new ImportKitError('MAP_ERROR', 'Record mapping or validation failed.', { cause: error, recordIndex: index });
       }
       checkAbort(options.signal);
@@ -121,6 +123,7 @@ async function importOpenSource<T>(
   } catch (error) {
     // Callbacks, limits, source checks and persistence raise ImportKitError, so any other error came from the reader.
     if (error instanceof ImportKitError) throw error;
+    checkAbort(options.signal);
     throw new ImportKitError('PARSE_ERROR', 'The reader failed to produce records.', { cause: error, recordIndex: traversal.count() + 1 });
   }
   if (traversal.parsedHash() !== sourceHash) {

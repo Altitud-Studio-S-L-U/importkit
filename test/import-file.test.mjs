@@ -308,6 +308,24 @@ test('abort during a durable commit saves its checkpoint before returning cancel
   assert.equal(destinationWrites, 1);
 });
 
+test('a callback or reader that fails after cancellation reports ABORTED', async (t) => {
+  const cases = {
+    mapRecord: (cancel) => ({ mapRecord: cancel }),
+    commitBatch: (cancel) => ({ commitBatch: async () => cancel() }),
+    reader: (cancel) => ({ reader: { id: 'cancelling:v1', async *read() { cancel(); } } }),
+  };
+  for (const [name, override] of Object.entries(cases)) {
+    const { options, batches } = await fixture(t);
+    const controller = new AbortController();
+    const cancel = () => {
+      controller.abort();
+      throw new Error('Cancelled by the caller.');
+    };
+    await assert.rejects(importFile({ ...options, signal: controller.signal, ...override(cancel) }), { code: 'ABORTED' }, name);
+    assert.deepEqual(batches, [], name);
+  }
+});
+
 test('two runs cannot write the same checkpoint concurrently', async (t) => {
   const { options } = await fixture(t, '{"id":1}\n');
   const started = Promise.withResolvers();
