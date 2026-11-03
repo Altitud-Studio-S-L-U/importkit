@@ -65,8 +65,14 @@ function assertFileOptions<T>(options: FileOptions<T>): ImportLimits {
 
 export function assertImportOptions<T>(options: ImportOptions<T>): ImportSettings<T> {
   const limits = assertFileOptions(options);
-  if (typeof options.checkpointPath !== 'string' || options.checkpointPath.length === 0) {
-    throw new ImportKitError('INVALID_OPTIONS', 'Source and checkpoint paths are required.');
+  if ('checkpointPath' in options) {
+    throw new ImportKitError('INVALID_OPTIONS', 'checkpointPath was replaced by { checkpointStore: fileCheckpointStore(path) }.');
+  }
+  const store: unknown = options.checkpointStore;
+  if (typeof store !== 'object' || store === null || !('load' in store) || !('save' in store)
+    || typeof store.load !== 'function' || typeof store.save !== 'function'
+    || ('lock' in store && store.lock !== undefined && typeof store.lock !== 'function')) {
+    throw new ImportKitError('INVALID_OPTIONS', 'checkpointStore must provide load() and save(), and lock() when present.');
   }
   if (typeof options.commitBatch !== 'function') {
     throw new ImportKitError('INVALID_OPTIONS', 'Reader, mapping, and destination callbacks are required.');

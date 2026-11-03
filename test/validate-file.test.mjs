@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, writeFile, rm, mkdir } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { csvReader, fileSource, importFile, ImportKitError, jsonlReader, validateFile } from '../dist/index.js';
+import { csvReader, fileCheckpointStore, fileSource, importFile, ImportKitError, jsonlReader, validateFile } from '../dist/index.js';
 
 async function fixture(t, content = '{"id":1}\n{"id":2}\n') {
   const directory = await mkdtemp(join(tmpdir(), 'importkit-validation-'));
@@ -134,7 +134,7 @@ test('validation does not read destination options, write source data, or touch 
   await writeFile(`${checkpointPath}.lock`, 'another importer owns this lock');
   const before = (await readdir(directory)).sort();
   const bytes = await readFile(path);
-  Object.defineProperty(options, 'checkpointPath', { get: () => assert.fail('Validation must not inspect a checkpoint option.') });
+  Object.defineProperty(options, 'checkpointStore', { get: () => assert.fail('Validation must not inspect a checkpoint option.') });
   Object.defineProperty(options, 'commitBatch', { get: () => assert.fail('Validation must not inspect a destination option.') });
   assert.equal((await validateFile(options)).status, 'valid');
   assert.deepEqual((await readdir(directory)).sort(), before);
@@ -150,7 +150,7 @@ test('validation and import share the exact stable record IDs and source hash', 
   const importedIds = [];
   const imported = await importFile({
     ...options,
-    checkpointPath: join(directory, 'new.checkpoint.json'),
+    checkpointStore: fileCheckpointStore(join(directory, 'new.checkpoint.json')),
     batchSize: 1,
     commitBatch: async (records) => { importedIds.push(...records.map((record) => record.id)); },
   });

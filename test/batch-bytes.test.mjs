@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { fileSource, importFile, jsonlReader } from '../dist/index.js';
+import { fileCheckpointStore, fileSource, importFile, jsonlReader } from '../dist/index.js';
 
 async function fixture(t, values = ['123456', 'abc', 'de']) {
   const directory = await mkdtemp(join(tmpdir(), 'importkit-batch-bytes-'));
@@ -18,7 +18,7 @@ async function fixture(t, values = ['123456', 'abc', 'de']) {
     reader: jsonlReader(),
     importId: 'synthetic-byte-batches',
     transformVersion: 'strings-v1',
-    checkpointPath,
+    checkpointStore: fileCheckpointStore(checkpointPath),
     batchSize: 500,
     maxBatchBytes: 10,
     measureRecordBytes: (value) => Buffer.byteLength(value, 'utf8'),
@@ -154,13 +154,13 @@ test('a rejected Promise measurement produces only the controlled error in a str
   const moduleUrl = new URL('../dist/index.js', import.meta.url).href;
   const script = `
     import assert from 'node:assert/strict';
-    import { fileSource, importFile, jsonlReader } from ${JSON.stringify(moduleUrl)};
+    import { fileCheckpointStore, fileSource, importFile, jsonlReader } from ${JSON.stringify(moduleUrl)};
     await assert.rejects(importFile({
       source: fileSource(${JSON.stringify(sourcePath)}),
       reader: jsonlReader(),
       importId: ${JSON.stringify(options.importId)},
       transformVersion: ${JSON.stringify(options.transformVersion)},
-      checkpointPath: ${JSON.stringify(checkpointPath)},
+      checkpointStore: fileCheckpointStore(${JSON.stringify(checkpointPath)}),
       maxBatchBytes: 10,
       measureRecordBytes: () => Promise.reject(new Error('Synthetic rejected measurement.')),
       mapRecord: (value) => value,

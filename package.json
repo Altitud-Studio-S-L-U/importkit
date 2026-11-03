@@ -22,9 +22,10 @@
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
-    "demo": "npm run build && node examples/validation.mjs && node examples/recovery.mjs",
+    "demo": "npm run build && node examples/validation.mjs && node examples/recovery.mjs && node examples/transactional.mjs",
     "demo:validation": "npm run build && node examples/validation.mjs",
     "demo:recovery": "npm run build && node examples/recovery.mjs",
+    "demo:transactional": "npm run build && node examples/transactional.mjs",
     "benchmark": "npm run build && node benchmarks/import.mjs",
     "benchmark:large": "npm run build && node benchmarks/large-files.mjs",
     "check": "npm run typecheck && npm test"

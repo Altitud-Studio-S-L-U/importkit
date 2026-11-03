@@ -233,7 +233,7 @@ async function runWorker(config) {
   const { options, manifest, phase, checkpointPath } = config;
   const cgroupBefore = await readCgroup();
   if (options.requireCgroup && !cgroupIsEnforced(cgroupBefore, options)) throw new Error('Required finite cgroup memory.max <= RSS budget and memory.swap.max=0 are not verified.');
-  const { importFile, validateFile, csvReader, fileSource, jsonlReader } = await import('../dist/index.js');
+  const { importFile, validateFile, csvReader, fileCheckpointStore, fileSource, jsonlReader } = await import('../dist/index.js');
   const reader = options.format === 'csv' ? csvReader() : jsonlReader();
   const verified = createVerifier(manifest);
   const memory = sampler(manifest.records, options.sampleMs);
@@ -271,7 +271,7 @@ async function runWorker(config) {
   try {
     if (phase === 'validate') result = await validateFile(common);
     else result = await importFile({
-      ...common, checkpointPath, batchSize: options.batchSize, maxBatchBytes: options.maxBatchBytes,
+      ...common, checkpointStore: fileCheckpointStore(checkpointPath), batchSize: options.batchSize, maxBatchBytes: options.maxBatchBytes,
       measureRecordBytes: (value) => Buffer.byteLength(value, 'utf8'),
       async commitBatch(records) {
         memory.sample('batch');

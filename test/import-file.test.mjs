@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { importFile, csvReader, fileSource, jsonlReader } from '../dist/index.js';
+import { importFile, csvReader, fileCheckpointStore, fileSource, jsonlReader } from '../dist/index.js';
 
 async function fixture(t, content = '{"id":1}\n{"id":2}\n{"id":3}\n') {
   const directory = await mkdtemp(join(tmpdir(), 'importkit-engine-'));
@@ -18,7 +18,7 @@ async function fixture(t, content = '{"id":1}\n{"id":2}\n{"id":3}\n') {
     reader: jsonlReader(),
     importId: 'test-import',
     transformVersion: 'v1',
-    checkpointPath,
+    checkpointStore: fileCheckpointStore(checkpointPath),
     batchSize: 2,
     mapRecord: (input) => input,
     commitBatch: async (records) => { batches.push([...records]); },
@@ -156,13 +156,13 @@ test('a killed importer leaves a lock and replays durable uncheckpointed records
   const moduleUrl = new URL('../dist/index.js', import.meta.url).href;
   await writeFile(childPath, `
     import { open } from 'node:fs/promises';
-    import { fileSource, importFile, jsonlReader } from ${JSON.stringify(moduleUrl)};
+    import { fileCheckpointStore, fileSource, importFile, jsonlReader } from ${JSON.stringify(moduleUrl)};
     await importFile({
       source: fileSource(${JSON.stringify(sourcePath)}),
       reader: jsonlReader(),
       importId: ${JSON.stringify(options.importId)},
       transformVersion: ${JSON.stringify(options.transformVersion)},
-      checkpointPath: ${JSON.stringify(checkpointPath)},
+      checkpointStore: fileCheckpointStore(${JSON.stringify(checkpointPath)}),
       batchSize: 2,
       mapRecord: (record) => record,
       commitBatch: async (records) => {
@@ -336,7 +336,7 @@ test('missing and nonregular input return source errors', async (t) => {
 test('source and checkpoint cannot be the same path', async (t) => {
   const { options, sourcePath } = await fixture(t);
   const original = await readFile(sourcePath, 'utf8');
-  await assert.rejects(importFile({ ...options, checkpointPath: sourcePath }), { code: 'INVALID_OPTIONS' });
+  await assert.rejects(importFile({ ...options, checkpointStore: fileCheckpointStore(sourcePath) }), { code: 'INVALID_OPTIONS' });
   assert.equal(await readFile(sourcePath, 'utf8'), original);
 });
 
