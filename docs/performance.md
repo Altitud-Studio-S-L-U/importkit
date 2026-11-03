@@ -68,10 +68,10 @@ Three runs on Node.js 24.11.1, Windows x64 with 16 logical cores, with a wait of
 
 | `concurrency` | Records per second | Speedup over 1 |
 | ---: | ---: | ---: |
-| 1 | 3,243–3,337 | 1 |
-| 2 | 6,418–6,644 | 1.95–1.99 |
-| 4 | 12,494–13,184 | 3.76–3.95 |
-| 8 | 24,005–25,043 | 7.22–7.72 |
+| 1 | 3,155–3,184 | 1 |
+| 2 | 6,125–6,374 | 1.92–2.02 |
+| 4 | 12,102–12,234 | 3.80–3.85 |
+| 8 | 23,617–23,975 | 7.42–7.60 |
 
 Every run met the criterion. The figures show how throughput scales when the destination only waits; a real database also limits concurrency through its connections, locks and disk.
 
