@@ -11,6 +11,7 @@ export type ImportErrorCode =
   | 'MAP_ERROR'
   | 'MEASURE_ERROR'
   | 'COMMIT_ERROR'
+  | 'PROGRESS_ERROR'
   | 'ABORTED';
 
 export interface ImportKitErrorOptions {

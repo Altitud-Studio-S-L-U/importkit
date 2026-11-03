@@ -13,8 +13,9 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 ### Added
 
 - Schemas: `schema` accepts any Standard Schema v1 implementation, such as Zod, Valibot or ArkType. It validates and types each record before `mapRecord`, which becomes optional. Validation issues report the `path` of the invalid field, with the new code `SCHEMA_ERROR`, and `includeSchemaMessages` copies the schema's messages into them.
+- `concurrency` commits up to 16 batches at the same time. The checkpoint advances only over batches whose predecessors are confirmed, and a failure waits for the batches in flight before rejecting.
+- `onProgress` reports the saved progress and the bytes read after every checkpoint save. A callback that throws stops the run with the new code `PROGRESS_ERROR`.
 - Source lines: `mapRecord` and `measureRecordBytes` receive the `line` where each record starts, and validation issues, parse errors and `ImportKitError` report it. A CSV record with line breaks inside quoted fields reports its first line.
-
 - Checkpoint stores: any object with `load()`, `save()` and an optional `lock()` can keep progress, for example in the destination database.
 - `commitBatch` receives `{ checkpoint, signal }`. Writing the checkpoint in the same transaction as the records prevents replays after a lost acknowledgment.
 - `fileSource()`, `fileCheckpointStore()`, and the `Checkpoint`, `CheckpointStore`, `CommitContext` and `FileSource` types.

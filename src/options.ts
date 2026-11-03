@@ -19,6 +19,7 @@ interface FileSettings<T> {
 export interface ImportSettings<T> extends FileSettings<T> {
   readonly batchSize: number;
   readonly byteBudget: ByteBudget<T> | undefined;
+  readonly concurrency: number;
 }
 
 export interface ValidationSettings<T> extends FileSettings<T> {
@@ -102,16 +103,24 @@ export function assertImportOptions<I, T>(options: ImportOptions<I, T>): ImportS
   if (batchSize > 10_000) {
     throw new ImportKitError('INVALID_OPTIONS', 'batchSize must not exceed 10,000 records.');
   }
+  // Each batch in flight holds its records in memory, so concurrency multiplies the memory a run needs.
+  const concurrency = options.concurrency ?? 1;
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 16) {
+    throw new ImportKitError('INVALID_OPTIONS', 'concurrency must be an integer from 1 through 16.');
+  }
+  if (options.onProgress !== undefined && typeof options.onProgress !== 'function') {
+    throw new ImportKitError('INVALID_OPTIONS', 'onProgress must be a function.');
+  }
   const { maxBatchBytes, measureRecordBytes } = options;
   if ((maxBatchBytes === undefined) !== (measureRecordBytes === undefined)) {
     throw new ImportKitError('INVALID_OPTIONS', 'maxBatchBytes and measureRecordBytes must be provided together.');
   }
-  if (maxBatchBytes === undefined || measureRecordBytes === undefined) return { limits, transform, batchSize, byteBudget: undefined };
+  if (maxBatchBytes === undefined || measureRecordBytes === undefined) return { limits, transform, batchSize, byteBudget: undefined, concurrency };
   positiveInteger(maxBatchBytes, 'maxBatchBytes');
   if (typeof measureRecordBytes !== 'function') {
     throw new ImportKitError('INVALID_OPTIONS', 'measureRecordBytes must be a synchronous function.');
   }
-  return { limits, transform, batchSize, byteBudget: { maxBatchBytes, measureRecordBytes } };
+  return { limits, transform, batchSize, byteBudget: { maxBatchBytes, measureRecordBytes }, concurrency };
 }
 
 export function assertValidationOptions<I, T>(options: ValidationOptions<I, T>): ValidationSettings<T> {

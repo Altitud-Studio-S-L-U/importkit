@@ -33,7 +33,7 @@ Everything below is exported by `@altitud-studio/importkit` and available throug
 function importFile<I = unknown, T = I>(options: ImportOptions<I, T>): Promise<ImportResult>;
 ```
 
-Fingerprints the source, loads the saved checkpoint, then parses the source, validates and maps each record and commits batches one at a time, in order. Resolves once every record is committed. Any failure rejects with an [`ImportKitError`](#errors).
+Fingerprints the source, loads the saved checkpoint, then parses the source, validates and maps each record, and commits batches in source order, one at a time unless `concurrency` is above 1. Resolves once every record is committed. Any failure rejects with an [`ImportKitError`](#errors).
 
 | Option | Type | Description |
 | --- | --- | --- |
@@ -46,10 +46,12 @@ Fingerprints the source, loads the saved checkpoint, then parses the source, val
 | `mapRecord` | `(input: I, context: RecordContext) => T \| Promise<T>` | Converts one record, or the schema's output when there is a schema. Required without a schema. Throwing stops the run with `MAP_ERROR`. |
 | `commitBatch` | `(records: readonly ImportRecord<T>[], context: CommitContext) => Promise<void>` | Required. Writes one batch. Resolve only once the write is durable. |
 | `batchSize` | `number` | Records per batch, from 1 to 10,000. Default: 500. |
+| `concurrency` | `number` | Batches committed at the same time, from 1 to 16. Default: 1. See [Commit batches concurrently](recovery.md#commit-batches-concurrently). |
 | `maxBatchBytes` | `number` | Measured bytes per batch. Requires `measureRecordBytes`. See [Limits](limits.md#bound-a-batch-by-measured-bytes). |
 | `measureRecordBytes` | `(value: T, context: RecordContext) => number` | Synchronous size of one mapped value. Requires `maxBatchBytes`. |
 | `limits` | `Partial<ImportLimits>` | Source and record limits. See [Limits](limits.md). |
 | `signal` | `AbortSignal` | Cancels the run. See [Cancellation](#cancellation). |
+| `onProgress` | `(progress: ImportProgress) => void \| Promise<void>` | Called after every checkpoint save with the [progress](#importprogress) so far. |
 
 `I` is what `mapRecord` receives: the schema's output, or `unknown` without a schema. `T` is the value your destination receives: what `mapRecord` returns, or the schema's output without `mapRecord`. TypeScript infers both from the options.
 
@@ -163,7 +165,20 @@ interface CommitContext {
 }
 ```
 
-`checkpoint` describes progress once this batch is committed. `signal` is the run's `signal`, when one was given.
+`checkpoint` describes progress once this batch is committed. With `concurrency` above 1, a batch that starts while an earlier one is still in flight receives the progress confirmed so far instead, which does not include it. `signal` is the run's `signal`, when one was given.
+
+### ImportProgress
+
+```ts
+interface ImportProgress {
+  readonly processedRecords: number;
+  readonly committedBatches: number;
+  readonly bytesRead: number;
+  readonly totalBytes: number;
+}
+```
+
+`onProgress` receives one after every checkpoint save. `processedRecords` is the saved checkpoint's progress and `committedBatches` counts the batches committed during this run. `bytesRead` counts the source bytes read when the last confirmed batch was formed. Readers buffer input, so it can run slightly ahead of that batch, and it equals `totalBytes` once the import completes, which makes `bytesRead / totalBytes` suitable for a progress bar. ImportKit waits for `onProgress` to return or resolve before it continues, and a callback that throws stops the run with `PROGRESS_ERROR`.
 
 ### ImportRecord and RecordContext
 
@@ -247,6 +262,7 @@ Every failure rejects with an `ImportKitError`. Its `code` identifies the failur
 | `MAP_ERROR` | `mapRecord` threw. | Correct the file or the mapping. Validating first avoids partial imports. |
 | `MEASURE_ERROR` | `measureRecordBytes` threw or did not return a nonnegative safe integer. | Fix the measurement. |
 | `COMMIT_ERROR` | `commitBatch` threw. | Run again; the batch may be delivered again. |
+| `PROGRESS_ERROR` | `onProgress` threw. | Fix the callback, then run again. The checkpoint it reported was saved. |
 | `CHECKPOINT_ERROR` | The checkpoint store failed, or returned or held an invalid checkpoint. | Fix the store, then run again. |
 | `CHECKPOINT_MISMATCH` | The saved checkpoint belongs to other content, another reader or another `transformVersion`. | Start a new import with a new `importId`, or remove the old checkpoint on purpose. |
 | `IMPORT_LOCKED` | Another run holds the checkpoint lock. | Wait for it, or confirm it stopped before removing the lock. |
@@ -256,7 +272,7 @@ Custom readers can throw an `ImportKitError` with an operational code, such as `
 
 ## Cancellation
 
-Pass an `AbortSignal` as `signal`. ImportKit checks it between records, around every callback and before each batch, and rejects with `ABORTED`. A batch whose `commitBatch` already resolved always gets its checkpoint saved before the run stops, so cancelling never discards confirmed progress. ImportKit cannot interrupt a callback that is running: use the signal from `CommitContext` inside `commitBatch` to stop long writes.
+Pass an `AbortSignal` as `signal`. ImportKit checks it between records, around every callback and before each batch, and rejects with `ABORTED`. A batch whose `commitBatch` already resolved always gets its checkpoint saved before the run stops, so cancelling never discards confirmed progress. With `concurrency` above 1, the run also waits for the batches in flight, so no callback runs after it rejects. ImportKit cannot interrupt a callback that is running: use the signal from `CommitContext` inside `commitBatch` to stop long writes.
 
 A callback or reader that fails once the signal is aborted, for example a database driver that rejects a cancelled query, also ends the run with `ABORTED` rather than `MAP_ERROR`, `COMMIT_ERROR` or `PARSE_ERROR`.
 

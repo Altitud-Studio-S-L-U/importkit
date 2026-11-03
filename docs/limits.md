@@ -24,7 +24,7 @@ Every limit must be a positive safe integer.
 
 - The readers enforce `maxRecordBytes` while decoding. For CSV it also applies to the header row, and delimiters, quotes, a byte order mark and line terminators count toward a record's size.
 - The source limits do not bound mapped values, which can be larger than their input. `mapRecord`, `measureRecordBytes` and `commitBatch` must bound their own allocations and work.
-- ImportKit sends one batch at a time and waits for `commitBatch` before reading further, so a slow destination slows reading down instead of filling memory.
+- ImportKit stops reading while `concurrency` batches are in flight, one by default, so a slow destination slows reading down instead of filling memory. Each batch in flight holds its records.
 
 ## Bound a batch by measured bytes
 

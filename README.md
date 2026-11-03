@@ -127,6 +127,7 @@ await importFile({
 | Option | Default | What it bounds |
 | --- | --- | --- |
 | `batchSize` | 500 | Records per `commitBatch` call, from 1 to 10,000. |
+| `concurrency` | 1 | Batches committed at the same time, from 1 to 16. |
 | `maxBatchBytes` | Not set | Measured bytes per batch. Requires `measureRecordBytes`. |
 | `limits.maxSourceBytes` | 1 GiB | Size of the source file. |
 | `limits.maxRecordBytes` | 1 MiB | Serialized size of one record, including its line terminator. |

@@ -66,11 +66,24 @@ export interface CheckpointStore {
 
 export interface CommitContext {
   /**
-   * Progress once this batch is committed. Saved in the same transaction as the records, it prevents the batch from
-   * being delivered again if the run stops before ImportKit saves the checkpoint itself.
+   * Progress once this batch is committed, or, when an earlier batch is still in flight, the progress already
+   * confirmed. Saved in the same transaction as the records, it prevents the batch from being delivered again if the
+   * run stops before ImportKit saves the checkpoint itself.
    */
   readonly checkpoint: Checkpoint;
   readonly signal?: AbortSignal;
+}
+
+/** Progress reported after each checkpoint save. */
+export interface ImportProgress {
+  /** Records the destination has confirmed, counted from the start of the source: the saved checkpoint. */
+  readonly processedRecords: number;
+  /** Batches committed during this run. */
+  readonly committedBatches: number;
+  /** Source bytes read when the last confirmed batch was formed. Readers buffer, so it can run slightly ahead. */
+  readonly bytesRead: number;
+  /** Size of the source in bytes. */
+  readonly totalBytes: number;
 }
 
 /**
@@ -89,8 +102,12 @@ export interface ImportOptions<I = unknown, T = I> {
   readonly maxBatchBytes?: number;
   /** Synchronous size of the transformed value's intended encoding; requires maxBatchBytes. */
   readonly measureRecordBytes?: (value: T, context: RecordContext) => number;
+  /** Batches committed at the same time, from 1 to 16. Batches can then finish in any order. Default: 1. */
+  readonly concurrency?: number;
   readonly limits?: Partial<ImportLimits>;
   readonly signal?: AbortSignal;
+  /** Called after each checkpoint save. Throwing stops the run with PROGRESS_ERROR. */
+  readonly onProgress?: (progress: ImportProgress) => void | Promise<void>;
   /** Validates and types each parsed value before mapRecord. Any Standard Schema v1 implementation works. */
   readonly schema?: StandardSchemaV1<unknown, I>;
   /** Converts a parsed value, or the schema's output when there is a schema. Required without a schema. */
