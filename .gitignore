@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.tmp/
+*.tgz
+.env
+.env.*
+!.env.example
+*.checkpoint.json
+*.checkpoint.json.lock
