@@ -1,0 +1,25 @@
+{
+  "name": "@altitud-studio/importkit",
+  "version": "0.1.0",
+  "description": "Resumable, bounded file imports for Node.js. Stream records, commit batches, recover with stable IDs.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Altitud Studio SLU (https://altitudstudio.ad)",
+  "engines": { "node": ">=24" },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md", "LICENSE"],
+  "repository": { "type": "git", "url": "git+https://github.com/Altitud-Studio-S-L-U/importkit.git" },
+  "bugs": { "url": "https://github.com/Altitud-Studio-S-L-U/importkit/issues" },
+  "homepage": "https://github.com/Altitud-Studio-S-L-U/importkit#readme",
+  "keywords": ["import", "csv", "jsonl", "streaming", "checkpoint", "resumable", "typescript", "nodejs"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "demo": "npm run build && node examples/recovery.mjs",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": { "csv-parse": "7.0.3" },
+  "devDependencies": { "@types/node": "24.19.2", "typescript": "7.0.2" }
+}
