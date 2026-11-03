@@ -36,6 +36,7 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 - Failures to inspect or close the source are reported as `SOURCE_ERROR` instead of escaping as raw Node.js errors or as `PARSE_ERROR`.
 - Failures to inspect the checkpoint path are reported as `CHECKPOINT_ERROR` instead of escaping as raw Node.js errors.
 - A callback or reader that fails after the run is cancelled reports `ABORTED` from `importFile`, as it already did from `validateFile`.
+- When closing the source or releasing the checkpoint lock fails after a run has already failed, the run rejects with its original error instead of the cleanup failure.
 
 ### Migration from 0.3
 

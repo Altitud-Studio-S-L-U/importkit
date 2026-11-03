@@ -164,3 +164,14 @@ test('a resumed run with a different source identity is rejected', async () => {
   const changed = bufferSource(content, { identity: 'memory:another-version' });
   await assert.rejects(importFile(options(changed.source, store)), { code: 'CHECKPOINT_MISMATCH' });
 });
+
+test('a failing close or lock release does not hide the error that ended the run', async () => {
+  const unclosable = bufferSource(content, { close: async () => { throw new Error('Close failed.'); } });
+  const failing = { ...options(unclosable.source), commitBatch: async () => { throw new Error('Destination unavailable.'); } };
+  await assert.rejects(importFile(failing), { code: 'COMMIT_ERROR' });
+  await assert.rejects(validateFile({ ...options(unclosable.source), limits: { maxRecords: 1 } }), { code: 'LIMIT_EXCEEDED' });
+  await assert.rejects(validateFile(options(unclosable.source)), { code: 'SOURCE_ERROR', message: 'Unable to close the source.' });
+  const store = { ...memoryStore(), lock: async () => async () => { throw new Error('Release failed.'); } };
+  await assert.rejects(importFile({ ...failing, source: bufferSource().source, checkpointStore: store }), { code: 'COMMIT_ERROR' });
+  await assert.rejects(importFile({ ...options(bufferSource().source), checkpointStore: store }), { code: 'CHECKPOINT_ERROR', message: 'Unable to release the checkpoint store lock.' });
+});

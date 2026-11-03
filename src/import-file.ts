@@ -5,7 +5,7 @@ import { assertResumable, guardCheckpointStore, initialCheckpoint } from './chec
 import type { GuardedCheckpointStore } from './checkpoints/checkpoint.js';
 import { FileCheckpointStore } from './checkpoints/file-checkpoint.js';
 import { CommitQueue } from './commit-queue.js';
-import { checkAbort, ImportKitError } from './errors.js';
+import { checkAbort, ImportKitError, withCleanup } from './errors.js';
 import { assertImportOptions } from './options.js';
 import type { ImportSettings } from './options.js';
 import { FileByteSource } from './sources/file-source.js';
@@ -43,17 +43,13 @@ export async function importFile<I = unknown, T = I>(options: ImportOptions<I, T
   if (fileStore !== undefined && options.source instanceof FileByteSource) await fileStore.assertSeparatePath(resolve(options.source.path));
   const checkpoints = guardCheckpointStore(options.checkpointStore);
   const release = await checkpoints.lock();
-  try {
+  return withCleanup(async () => {
     const source = await openSource(options.source, settings.limits, options.signal);
-    try {
+    return withCleanup(async () => {
       if (fileStore !== undefined && source.fileState !== undefined) await fileStore.assertSeparateFile(source.fileState);
-      return await importOpenSource(options, settings, checkpoints, source);
-    } finally {
-      await source.close();
-    }
-  } finally {
-    await release();
-  }
+      return importOpenSource(options, settings, checkpoints, source);
+    }, source.close);
+  }, release);
 }
 
 function progressReporter(onProgress: ImportOptions['onProgress'], signal: AbortSignal | undefined): ((progress: ImportProgress) => Promise<void>) | undefined {
@@ -144,25 +140,26 @@ async function importOpenSource<I, T>(
 
   let sourceHash: string;
   try {
-    await deliver();
-    // A reader may stop before the last byte; the hash and the size check cover the whole source.
-    await traversal.drain();
-    sourceHash = traversal.contentHash();
-    if (source.sha256 !== undefined && sourceHash !== source.sha256) {
-      throw new ImportKitError('SOURCE_CHANGED', 'The source bytes changed between fingerprinting and parsing.');
-    }
-    await source.assertUnchanged();
-    if (traversal.count() < resumedFrom) throw new ImportKitError('CHECKPOINT_MISMATCH', 'Checkpoint progress exceeds the reader output.');
-    // Completed imports are parsed again so smaller limits and reader failures still apply.
-    await flush(true);
-    await queue.complete(traversal.count(), traversal.bytesRead());
-    checkAbort(options.signal);
+    sourceHash = await withCleanup(async () => {
+      await deliver();
+      // A reader may stop before the last byte; the hash and the size check cover the whole source.
+      await traversal.drain();
+      const contentHash = traversal.contentHash();
+      if (source.sha256 !== undefined && contentHash !== source.sha256) {
+        throw new ImportKitError('SOURCE_CHANGED', 'The source bytes changed between fingerprinting and parsing.');
+      }
+      await source.assertUnchanged();
+      if (traversal.count() < resumedFrom) throw new ImportKitError('CHECKPOINT_MISMATCH', 'Checkpoint progress exceeds the reader output.');
+      // Completed imports are parsed again so smaller limits and reader failures still apply.
+      await flush(true);
+      await queue.complete(traversal.count(), traversal.bytesRead());
+      checkAbort(options.signal);
+      return contentHash;
+    }, traversal.close);
   } catch (error) {
     // No callback may run once the import settles: wait for batches in flight and save the progress they confirm.
     await queue.settle();
     throw error;
-  } finally {
-    await traversal.close();
   }
   return { status: 'completed', resumedFrom, processedRecords: traversal.count(), committedBatches: queue.committedBatches, sourceHash };
 }
