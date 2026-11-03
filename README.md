@@ -235,6 +235,8 @@ The application functions validate and encode orders, then persist them idempote
 
 The measurement callback receives the mapped `value` and `{ id, index }`. It runs once for each successfully mapped, unconfirmed record reached during an attempt and must return a **nonnegative safe integer** synchronously; zero is allowed. Thrown errors, negative or fractional sizes, `NaN`, infinity and Promise results fail with `MEASURE_ERROR` and the record ordinal. Missing one of the two options is invalid configuration. Measurement should be deterministic and free of side effects; a retry can map and measure uncheckpointed records again.
 
+Keep mapped values and their measured representation unchanged until their destination call resolves. Reusing a mutable object or buffer across records can change already measured values; ImportKit retains the supplied values rather than deep-cloning them.
+
 If the next record would exceed the remaining byte budget, ImportKit commits the previous batch before adding that record. Equality with either limit commits immediately. A single record measured above `maxBatchBytes` fails with `LIMIT_EXCEEDED` **before** flushing a pending previous batch. Earlier committed batches remain committed. Checkpoints always advance to the last record in the committed batch, including when a later record has already been mapped for the size decision.
 
 Byte accounting changes batch grouping, not record IDs or the checkpoint schema. Batch limits can change on resume without changing stable IDs. Delivery remains at least once, and the destination retains its idempotency responsibility. `maxBatchBytes` limits reported payload sizes, not V8 heap or process RSS; mapping and measurement happen before an oversized result can be rejected.
@@ -341,6 +343,19 @@ systemd-run --user --wait --pipe --collect --quiet \
 ```
 
 The large-file destination verifies record count, order and a digest in memory while imports persist real checkpoints. It does not persist records to a database or measure database throughput. Slower destinations and larger rows can be exercised separately on smaller files. Replay and idempotency remain the subject of the recovery demo, rather than a claim made by this runner.
+
+Observed on Node.js 24.11.1, Linux x64 under WSL2, using nominal 4 KiB synthetic records, 1 MiB measured batches and a 512 MiB cgroup with swap disabled:
+
+| Format | Source bytes | Imported records | Importer peak RSS reported by the OS |
+| --- | ---: | ---: | ---: |
+| CSV | 1,000,000,000 | 244,141 | 81.91 MiB |
+| CSV | 10,000,000,000 | 2,441,407 | 85.39 MiB |
+| JSON Lines | 1,000,000,000 | 244,141 | 88.18 MiB |
+| JSON Lines | 10,000,000,000 | 2,441,407 | 81.86 MiB |
+
+Both 1 GB cases also completed a separate validation phase. The 10 GB cases exercised import only. All source sizes, order, values, record counts, digests and batch limits were verified; no OOM events occurred. The preset acceptance criterion allowed at most 64 MiB additional importer peak RSS from 1 GB to 10 GB for the same format, which both cases met.
+
+These are single observations per case, with up to two cases overlapping and filesystem caches left intact. They do not establish universal RSS or throughput guarantees; the cgroup peak also includes the coordinator and file cache. [The 0.3.0 release](https://github.com/Altitud-Studio-S-L-U/importkit/releases/tag/v0.3.0) includes the raw reports, fixed criteria, analysis and memory figure.
 
 There are no GitHub Actions workflows or deployment pipelines in this repository. Maintainers run the checks locally and review pull requests before merging. See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [SECURITY.md](SECURITY.md) for reporting concerns.
 
