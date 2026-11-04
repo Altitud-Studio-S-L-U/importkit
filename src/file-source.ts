@@ -36,8 +36,21 @@ export async function openSource(path: string, maxSourceBytes: number): Promise<
   }
 }
 
+export async function closeSource(handle: FileHandle): Promise<void> {
+  try {
+    await handle.close();
+  } catch (error) {
+    throw new ImportKitError('SOURCE_ERROR', 'Unable to close the source file.', { cause: error });
+  }
+}
+
 export async function assertSourceState(handle: FileHandle, expected: BigIntStats): Promise<void> {
-  const current = await handle.stat({ bigint: true });
+  let current: BigIntStats;
+  try {
+    current = await handle.stat({ bigint: true });
+  } catch (error) {
+    throw new ImportKitError('SOURCE_ERROR', 'Unable to inspect the source file.', { cause: error });
+  }
   if (current.dev !== expected.dev || current.ino !== expected.ino || current.size !== expected.size
     || current.mtimeNs !== expected.mtimeNs || current.ctimeNs !== expected.ctimeNs) {
     throw new ImportKitError('SOURCE_CHANGED', 'The source changed during the import. Keep it immutable for the entire run.');

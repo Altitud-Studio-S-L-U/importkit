@@ -1,5 +1,5 @@
 import { checkAbort, ImportKitError } from './errors.js';
-import { assertSourceState, fingerprint, openSource } from './file-source.js';
+import { assertSourceState, closeSource, fingerprint, openSource } from './file-source.js';
 import { assertValidationOptions } from './options.js';
 import { traverseRecords } from './traversal.js';
 import type { ValidationIssue, ValidationOptions, ValidationResult } from './types.js';
@@ -59,6 +59,6 @@ export async function validateFile<T>(options: ValidationOptions<T>): Promise<Va
       ? { ...summary, status: 'incomplete', parseError: Object.freeze({ code: 'PARSE_ERROR', message: 'The reader could not complete structural parsing.' }) }
       : { ...summary, status: invalidRecords === 0 ? 'valid' : 'invalid' };
   } finally {
-    await handle.close();
+    await closeSource(handle);
   }
 }
