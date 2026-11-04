@@ -1,13 +1,20 @@
 import { parse } from 'csv-parse';
+import type { InfoRecord } from 'csv-parse';
 import { hasErrorCode, ImportKitError } from '../errors.js';
-import type { RecordReader } from '../types.js';
+import type { ParsedRecord, RecordReader } from '../types.js';
+import { LineCounter } from './line-counter.js';
 import { assertReaderLimits, recordSizeError } from './shared.js';
 
-function csvError(error: unknown): ImportKitError {
+interface CsvRow {
+  readonly fields: string[];
+  readonly line: number;
+}
+
+function csvError(error: unknown, line: number): ImportKitError {
   if (error instanceof ImportKitError) return error;
-  if (hasErrorCode(error, 'CSV_MAX_RECORD_SIZE')) return recordSizeError();
+  if (hasErrorCode(error, 'CSV_MAX_RECORD_SIZE')) return recordSizeError(line);
   // csv-parse errors may contain source values; keep those out of the public error.
-  return new ImportKitError('PARSE_ERROR', 'Invalid CSV input.');
+  return new ImportKitError('PARSE_ERROR', 'Invalid CSV input.', { line });
 }
 
 function validateUtf8(decoder: TextDecoder, chunk?: Uint8Array): void {
@@ -32,11 +39,22 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
       assertReaderLimits(limits);
       let completedBytes = 0;
       let offeredBytes = 0;
+      // csv-parse counts a CRLF inside a quoted field as two lines, so lines are
+      // counted from the byte offset where each record starts.
+      const lines = new LineCounter();
+      let recordLine = 1;
       // csv-parse retains a few UTF-8 bytes to distinguish delimiters, escaped
       // quotes, and multibyte whitespace. This constant lookahead is not part of
       // an accepted record's byte budget, checked independently in on_record.
       const lookaheadBytes = 4;
       const decoder = new TextDecoder('utf-8', { fatal: true });
+      const onRecord = (fields: string[], info: InfoRecord): CsvRow => {
+        if (info.bytes - completedBytes > limits.maxRecordBytes) throw recordSizeError(recordLine);
+        const row = { fields, line: recordLine };
+        completedBytes = info.bytes;
+        recordLine = lines.lineAt(completedBytes);
+        return row;
+      };
       const parser = parse({
         bom: true,
         delimiter,
@@ -44,11 +62,8 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
         skip_empty_lines: false,
         relax_column_count: false,
         max_record_size: limits.maxRecordBytes,
-        on_record: (record: string[], info) => {
-          if (info.bytes - completedBytes > limits.maxRecordBytes) throw recordSizeError();
-          completedBytes = info.bytes;
-          return record;
-        },
+        // The parser emits whatever on_record returns, but its types expect the unchanged fields.
+        on_record: onRecord as unknown as (fields: string[], info: InfoRecord) => string[],
       });
 
       // A producer and consumer run together so the parser's object-mode high-water
@@ -60,21 +75,22 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
             let offset = 0;
             while (offset < chunk.byteLength) {
               const capacity = limits.maxRecordBytes + lookaheadBytes - (offeredBytes - completedBytes);
-              if (capacity <= 0) throw recordSizeError();
+              if (capacity <= 0) throw recordSizeError(recordLine);
               const end = Math.min(chunk.byteLength, offset + capacity, offset + 16_384);
               const part = chunk.subarray(offset, end);
               validateUtf8(decoder, part);
               offeredBytes += part.byteLength;
+              lines.append(part);
               await new Promise<void>((resolve, reject) => {
-                parser.write(part, (error) => error ? reject(csvError(error)) : resolve());
+                parser.write(part, (error) => error ? reject(csvError(error, recordLine)) : resolve());
               });
-              if (offeredBytes - completedBytes >= limits.maxRecordBytes + lookaheadBytes) throw recordSizeError();
+              if (offeredBytes - completedBytes >= limits.maxRecordBytes + lookaheadBytes) throw recordSizeError(recordLine);
               offset = end;
             }
           }
           validateUtf8(decoder);
           await new Promise<void>((resolve, reject) => {
-            parser.end((error?: Error | null) => error ? reject(csvError(error)) : resolve());
+            parser.end((error?: Error | null) => error ? reject(csvError(error, recordLine)) : resolve());
           });
         } catch (error) {
           parser.destroy(error instanceof ImportKitError ? error : new ImportKitError('SOURCE_ERROR', 'Unable to read source bytes.', { cause: error }));
@@ -83,21 +99,22 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
 
       let headers: string[] | undefined;
       try {
-        for await (const row of parser as AsyncIterable<string[]>) {
+        for await (const { fields, line } of parser as AsyncIterable<CsvRow>) {
           if (headers === undefined) {
-            if (row.some((header) => header.trim().length === 0 || ['__proto__', 'prototype', 'constructor'].includes(header)) || new Set(row).size !== row.length) {
-              throw new ImportKitError('PARSE_ERROR', 'CSV headers must be nonempty, unique, and must not use reserved object keys.');
+            if (fields.some((header) => header.trim().length === 0 || ['__proto__', 'prototype', 'constructor'].includes(header)) || new Set(fields).size !== fields.length) {
+              throw new ImportKitError('PARSE_ERROR', 'CSV headers must be nonempty, unique, and must not use reserved object keys.', { line });
             }
-            headers = row;
+            headers = fields;
             continue;
           }
-          const record: Record<string, string> = Object.create(null) as Record<string, string>;
-          for (const [index, header] of headers.entries()) record[header] = row[index]!;
+          const value: Record<string, string> = Object.create(null) as Record<string, string>;
+          for (const [index, header] of headers.entries()) value[header] = fields[index]!;
+          const record: ParsedRecord = { value, line };
           yield record;
         }
         await producer;
       } catch (error) {
-        throw csvError(error);
+        throw csvError(error, recordLine);
       } finally {
         parser.destroy();
         await producer;

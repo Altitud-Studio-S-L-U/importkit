@@ -1,5 +1,5 @@
 import { ImportKitError } from '../errors.js';
-import type { RecordReader } from '../types.js';
+import type { ParsedRecord, RecordReader } from '../types.js';
 import { assertReaderLimits, recordSizeError } from './shared.js';
 
 /** Strict JSON Lines; empty physical lines are errors, and a final newline is optional. */
@@ -10,31 +10,34 @@ export function jsonlReader(): RecordReader {
       assertReaderLimits(limits);
       let parts: Uint8Array[] = [];
       let bytes = 0;
+      let line = 1;
       let firstLine = true;
 
       const append = (part: Uint8Array): void => {
-        if (bytes + part.byteLength > limits.maxRecordBytes) throw recordSizeError();
+        if (bytes + part.byteLength > limits.maxRecordBytes) throw recordSizeError(line);
         if (part.byteLength > 0) parts.push(part);
         bytes += part.byteLength;
       };
-      const readLine = (): unknown => {
+      const readLine = (): ParsedRecord => {
         let text: string;
         try {
           text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(parts, bytes));
         } catch {
-          throw new ImportKitError('PARSE_ERROR', 'Input must contain valid UTF-8.');
+          throw new ImportKitError('PARSE_ERROR', 'Input must contain valid UTF-8.', { line });
         }
         parts = [];
         bytes = 0;
         if (firstLine) text = text.replace(/^\uFEFF/u, '');
         firstLine = false;
         if (text.endsWith('\r')) text = text.slice(0, -1);
-        if (text.trim().length === 0) throw new ImportKitError('PARSE_ERROR', 'JSON Lines input must not contain empty records.');
+        if (text.trim().length === 0) throw new ImportKitError('PARSE_ERROR', 'JSON Lines input must not contain empty records.', { line });
+        let value: unknown;
         try {
-          return JSON.parse(text) as unknown;
+          value = JSON.parse(text) as unknown;
         } catch {
-          throw new ImportKitError('PARSE_ERROR', 'Invalid JSON Lines input.');
+          throw new ImportKitError('PARSE_ERROR', 'Invalid JSON Lines input.', { line });
         }
+        return { value, line: line++ };
       };
 
       for await (const chunk of chunks) {
@@ -42,7 +45,7 @@ export function jsonlReader(): RecordReader {
         for (let index = 0; index < chunk.byteLength; index++) {
           if (chunk[index] !== 10) continue;
           append(chunk.subarray(offset, index));
-          if (bytes + 1 > limits.maxRecordBytes) throw recordSizeError();
+          if (bytes + 1 > limits.maxRecordBytes) throw recordSizeError(line);
           yield readLine();
           offset = index + 1;
         }

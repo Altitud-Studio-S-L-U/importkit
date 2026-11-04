@@ -12,15 +12,24 @@ export type ImportErrorCode =
   | 'COMMIT_ERROR'
   | 'ABORTED';
 
+export interface ImportKitErrorOptions {
+  readonly cause?: unknown;
+  readonly recordIndex?: number | undefined;
+  readonly line?: number | undefined;
+}
+
 export class ImportKitError extends Error {
   readonly code: ImportErrorCode;
   readonly recordIndex: number | undefined;
+  /** One-based source line of the record involved, when the reader reports it. */
+  readonly line: number | undefined;
 
-  constructor(code: ImportErrorCode, message: string, options: { cause?: unknown; recordIndex?: number } = {}) {
+  constructor(code: ImportErrorCode, message: string, options: ImportKitErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'ImportKitError';
     this.code = code;
     this.recordIndex = options.recordIndex;
+    this.line = options.line;
   }
 }
 

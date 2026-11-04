@@ -2,7 +2,15 @@ import { checkAbort, ImportKitError } from './errors.js';
 import { assertSourceState, closeSource, fingerprint, openSource } from './file-source.js';
 import { assertValidationOptions } from './options.js';
 import { traverseRecords } from './traversal.js';
-import type { ValidationIssue, ValidationOptions, ValidationResult } from './types.js';
+import type { RecordContext, ValidationIssue, ValidationOptions, ValidationParseError, ValidationResult } from './types.js';
+
+function issue(code: ValidationIssue['code'], context: RecordContext, message: string): ValidationIssue {
+  return Object.freeze({
+    code, recordIndex: context.index,
+    ...(context.line === undefined ? {} : { line: context.line }),
+    message,
+  });
+}
 
 /** Validates an immutable local file without opening a destination or checkpoint. */
 export async function validateFile<T>(options: ValidationOptions<T>): Promise<ValidationResult> {
@@ -16,21 +24,20 @@ export async function validateFile<T>(options: ValidationOptions<T>): Promise<Va
     let invalidRecords = 0;
     const issues: ValidationIssue[] = [];
     let incomplete = false;
+    let parseErrorLine: number | undefined;
     const traversal = traverseRecords(handle, options, limits, sourceHash);
 
     try {
-      for await (const input of traversal.inputs()) {
-        const index = traversal.visit();
-        const id = traversal.recordId(index);
+      for await (const record of traversal.inputs()) {
+        const index = traversal.visit(record);
+        const context = traversal.context(index, record);
         try {
-          await options.mapRecord(input, { id, index });
+          await options.mapRecord(record.value, context);
           validRecords++;
         } catch {
           checkAbort(options.signal);
           invalidRecords++;
-          if (issues.length < maxIssues) {
-            issues.push(Object.freeze({ code: 'MAP_ERROR', recordIndex: index, message: 'Record mapping or validation failed.' }));
-          }
+          if (issues.length < maxIssues) issues.push(issue('MAP_ERROR', context, 'Record mapping or validation failed.'));
         }
         checkAbort(options.signal);
       }
@@ -38,6 +45,7 @@ export async function validateFile<T>(options: ValidationOptions<T>): Promise<Va
       checkAbort(options.signal);
       if (error instanceof ImportKitError && error.code !== 'PARSE_ERROR') throw error;
       incomplete = true;
+      if (error instanceof ImportKitError) parseErrorLine = error.line;
     }
 
     checkAbort(options.signal);
@@ -55,9 +63,12 @@ export async function validateFile<T>(options: ValidationOptions<T>): Promise<Va
       sourceHash, processedRecords: traversal.count(), validRecords, invalidRecords,
       issues: Object.freeze(issues), issuesTruncated: invalidRecords > issues.length,
     };
-    return incomplete
-      ? { ...summary, status: 'incomplete', parseError: Object.freeze({ code: 'PARSE_ERROR', message: 'The reader could not complete structural parsing.' }) }
-      : { ...summary, status: invalidRecords === 0 ? 'valid' : 'invalid' };
+    if (!incomplete) return { ...summary, status: invalidRecords === 0 ? 'valid' : 'invalid' };
+    const parseError: ValidationParseError = Object.freeze({
+      code: 'PARSE_ERROR', message: 'The reader could not complete structural parsing.',
+      ...(parseErrorLine === undefined ? {} : { line: parseErrorLine }),
+    });
+    return { ...summary, status: 'incomplete', parseError };
   } finally {
     await closeSource(handle);
   }

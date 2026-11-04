@@ -382,7 +382,7 @@ test('custom readers integrate with the same batching contract and backpressure'
       for await (const chunk of chunks) {
         for (const byte of chunk) {
           yielded++;
-          yield String.fromCharCode(byte);
+          yield { value: String.fromCharCode(byte) };
         }
       }
     },
@@ -441,4 +441,36 @@ test('the 0.3 source shape and invalid file sources are rejected with guidance',
     assert.throws(() => fileSource(path), { code: 'INVALID_OPTIONS' });
   }
   assert.ok(Object.isFrozen(fileSource(sourcePath)));
+});
+
+test('mapping errors carry the source line and callbacks receive it in their context', async (t) => {
+  const { options } = await fixture(t, 'id,note\n1,"two\nlines"\n2,bad\n');
+  const contexts = [];
+  await assert.rejects(importFile({
+    ...options,
+    reader: csvReader(),
+    mapRecord: (input, context) => {
+      contexts.push({ ...context });
+      if (input.note === 'bad') throw new Error('Rejected.');
+      return input;
+    },
+  }), { code: 'MAP_ERROR', recordIndex: 2, line: 4 });
+  assert.deepEqual(contexts.map(({ index, line }) => ({ index, line })), [{ index: 1, line: 2 }, { index: 2, line: 4 }]);
+  assert.ok(contexts.every((context) => /^[a-f0-9]{64}$/u.test(context.id)));
+});
+
+test('a reader that yields bare values instead of { value } records is rejected before mapping', async (t) => {
+  for (const yielded of [{ id: 1 }, 'text', null, { value: 1, extra: true }, { value: 1, line: 0 }]) {
+    const { options, batches } = await fixture(t);
+    const reader = {
+      id: 'bare-values:v1',
+      async *read(chunks) {
+        for await (const _chunk of chunks) { /* Consume the source. */ }
+        yield yielded;
+      },
+    };
+    await assert.rejects(importFile({ ...options, reader, mapRecord: () => assert.fail('A malformed record must not be mapped.') }),
+      { code: 'INVALID_OPTIONS', recordIndex: 1 });
+    assert.deepEqual(batches, []);
+  }
 });

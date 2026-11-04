@@ -23,11 +23,11 @@ function measureBytes<T>(measure: (value: T, context: RecordContext) => number, 
     }
   } catch (error) {
     checkAbort(signal);
-    throw new ImportKitError('MEASURE_ERROR', 'Record byte measurement failed.', { cause: error, recordIndex: context.index });
+    throw new ImportKitError('MEASURE_ERROR', 'Record byte measurement failed.', { cause: error, recordIndex: context.index, line: context.line });
   }
   checkAbort(signal);
   if (typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0) {
-    throw new ImportKitError('MEASURE_ERROR', 'Record byte measurement must return a nonnegative safe integer synchronously.', { recordIndex: context.index });
+    throw new ImportKitError('MEASURE_ERROR', 'Record byte measurement must return a nonnegative safe integer synchronously.', { recordIndex: context.index, line: context.line });
   }
   return bytes;
 }
@@ -97,27 +97,27 @@ async function importOpenSource<T>(
   };
 
   try {
-    for await (const input of traversal.inputs()) {
-      const index = traversal.visit();
+    for await (const record of traversal.inputs()) {
+      const index = traversal.visit(record);
       if (index <= resumedFrom) continue;
-      const id = traversal.recordId(index);
+      const context = traversal.context(index, record);
       let value: T;
       try {
-        value = await options.mapRecord(input, { id, index });
+        value = await options.mapRecord(record.value, context);
       } catch (error) {
         checkAbort(options.signal);
-        throw new ImportKitError('MAP_ERROR', 'Record mapping or validation failed.', { cause: error, recordIndex: index });
+        throw new ImportKitError('MAP_ERROR', 'Record mapping or validation failed.', { cause: error, recordIndex: index, line: context.line });
       }
       checkAbort(options.signal);
       let bytes = 0;
       if (byteBudget !== undefined) {
-        bytes = measureBytes(byteBudget.measureRecordBytes, value, { id, index }, options.signal);
+        bytes = measureBytes(byteBudget.measureRecordBytes, value, context, options.signal);
         if (bytes > byteBudget.maxBatchBytes) {
-          throw new ImportKitError('LIMIT_EXCEEDED', 'A transformed record exceeds maxBatchBytes.', { recordIndex: index });
+          throw new ImportKitError('LIMIT_EXCEEDED', 'A transformed record exceeds maxBatchBytes.', { recordIndex: index, line: context.line });
         }
         if (batch.mustCommitBefore(bytes)) await commit(false);
       }
-      batch.add(Object.freeze({ id, index, value }), bytes);
+      batch.add(Object.freeze({ id: context.id, index, value }), bytes);
       if (batch.isFull()) await commit(false);
     }
   } catch (error) {

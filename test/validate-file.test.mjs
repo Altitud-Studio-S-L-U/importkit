@@ -249,3 +249,30 @@ test('validation rejects the 0.3 source shape with guidance', async (t) => {
     message: /\{ source: fileSource\(path\), reader: csvReader\(\) \}/u,
   });
 });
+
+test('issues and parse errors report the line where the record starts', async (t) => {
+  const { options } = await fixture(t, 'id,note\n1,"multi\nline"\n2,bad\n3,ok\n');
+  const reject = (input) => {
+    if (input.note === 'bad') throw new Error('Rejected.');
+    return input;
+  };
+  const report = await validateFile({ ...options, reader: csvReader(), mapRecord: reject });
+  assert.deepEqual(report.issues, [{ code: 'MAP_ERROR', recordIndex: 2, line: 4, message: 'Record mapping or validation failed.' }]);
+  const malformed = await fixture(t, '{"id":1}\n{"id":2}\n{"id":\n');
+  const incomplete = await validateFile(malformed.options);
+  assert.equal(incomplete.status, 'incomplete');
+  assert.equal(incomplete.parseError.line, 3);
+});
+
+test('a reader without line numbers produces issues without a line', async (t) => {
+  const { options } = await fixture(t);
+  const reader = {
+    id: 'lineless:v1',
+    async *read(chunks) {
+      for await (const _chunk of chunks) { /* Consume the source. */ }
+      yield { value: 'only' };
+    },
+  };
+  const report = await validateFile({ ...options, reader, mapRecord: () => { throw new Error('Rejected.'); } });
+  assert.deepEqual(report.issues, [{ code: 'MAP_ERROR', recordIndex: 1, message: 'Record mapping or validation failed.' }]);
+});

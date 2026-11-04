@@ -5,5 +5,9 @@ export { fileCheckpointStore } from './checkpoints/file-checkpoint.js';
 export { csvReader } from './readers/csv.js';
 export { jsonlReader } from './readers/jsonl.js';
 export { ImportKitError } from './errors.js';
-export type { ImportErrorCode } from './errors.js';
-export type { Checkpoint, CheckpointStore, CommitContext, FileSource, ImportOptions, ImportResult, ImportRecord, ImportLimits, RecordContext, RecordReader, ReaderLimits, ValidationOptions, ValidationIssue, ValidationResult } from './types.js';
+export type { ImportErrorCode, ImportKitErrorOptions } from './errors.js';
+export type {
+  Checkpoint, CheckpointStore, CommitContext, FileSource, ImportLimits, ImportOptions, ImportRecord, ImportResult,
+  ParsedRecord, ReaderLimits, RecordContext, RecordReader, ValidationIssue, ValidationOptions, ValidationParseError,
+  ValidationResult,
+} from './types.js';
