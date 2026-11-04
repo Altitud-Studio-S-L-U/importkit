@@ -1,6 +1,8 @@
 export { importFile } from './import-file.js';
 export { validateFile } from './validate-file.js';
 export { fileSource } from './sources/file-source.js';
+export { httpSource } from './sources/http-source.js';
+export type { HttpSourceOptions } from './sources/http-source.js';
 export { fileCheckpointStore } from './checkpoints/file-checkpoint.js';
 export { csvReader } from './readers/csv.js';
 export { jsonlReader } from './readers/jsonl.js';

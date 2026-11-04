@@ -1,6 +1,6 @@
 # Sources
 
-A source supplies the bytes of a run. `fileSource(path)` reads a local file, and any object that implements `ByteSource` can supply bytes from other storage. This page describes what ImportKit expects from a source and how to write one.
+A source supplies the bytes of a run. `fileSource(path)` reads a local file, `httpSource(url)` reads one over HTTP, and any object that implements `ByteSource` can supply bytes from other storage. This page describes what ImportKit expects from a source and how to write one.
 
 ## Read a local file
 
@@ -13,6 +13,37 @@ const source = fileSource('./uploads/orders.csv');
 - The path must name a regular file that exists when the run starts and stays unchanged until it ends. Copy an upload to a location your application owns before importing it.
 - Each run reads the whole file once to compute its SHA-256, which becomes the source's identity, and then reads it again to parse it. A validation reads it a third time at the end, so that its report describes the file as it still is. A difference between the reads, or a change to the file's size or timestamps during the run, fails it with `SOURCE_CHANGED`.
 - Validate and authorize the path before passing it: ImportKit is not a path sandbox.
+
+## Read a file over HTTP
+
+```ts
+import { csvReader, fileCheckpointStore, httpSource, importFile } from '@altitud-studio/importkit';
+
+await importFile({
+  source: httpSource('https://exports.example.com/orders/2026-11.csv', {
+    headers: { authorization: `Bearer ${process.env.EXPORTS_TOKEN}` },
+  }),
+  reader: csvReader(),
+  importId: 'orders-2026-11',
+  transformVersion: 'orders-v1',
+  checkpointStore: fileCheckpointStore('./checkpoints/orders-2026-11.json'),
+  mapRecord: (input) => parseOrder(input),
+  async commitBatch(records) {
+    await saveOrders(records);
+  },
+});
+```
+
+Each run sends one `GET` request with your headers and reads the body once, without a fingerprint pass. Object stores such as Amazon S3, Google Cloud Storage, Cloudflare R2 and Azure Blob Storage work through presigned URLs, without their SDKs.
+
+- **The response must prove what it is.** ImportKit requires status 200, a strong `ETag`, a `Content-Length` within `maxSourceBytes` and no `Content-Encoding`, and sends `Accept-Encoding: identity` to ask for that. Any other response fails with `SOURCE_ERROR`, or `LIMIT_EXCEEDED` for its size, before a record is read.
+- **The ETag is the identity.** The checkpoint stores `etag:` followed by the ETag. A resumed run downloads the content again from the first byte and continues only if the server returns the same ETag; a new version fails with `CHECKPOINT_MISMATCH`. The URL is not part of the identity, so a freshly presigned URL resumes the same import.
+- **The ETag must change with the content.** Object stores guarantee it. A server that derives ETags from the modification time and the size can keep an ETag across an edit of the same size, and is not a suitable source.
+- **Redirects are refused.** Pass the final URL: following a redirect could send your headers to another host.
+- **Errors stay free of secrets.** Messages never include the URL or the headers. The `cause` of a network failure can name the host.
+- **Bound the time.** A stalled server waits for the Node.js default timeouts. Pass a `signal` such as `AbortSignal.timeout(600_000)` to bound a run.
+
+ImportKit fetches the URL you give it. If any part of the URL comes from a user, check it against the hosts your service is meant to reach first.
 
 ## How ImportKit uses a source
 

@@ -13,6 +13,7 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 
 ### Added
 
+- `httpSource(url, { headers })` reads a file over HTTP or HTTPS, such as an object in S3, Google Cloud Storage or R2 through a presigned URL. Its strong ETag is the source identity, so a resumed run continues only against the same version.
 - Sources: `source` accepts any `ByteSource`, so an import can read storage other than local files. ImportKit validates what a source returns, counts its bytes and reports their SHA-256.
 - Schemas: `schema` accepts any Standard Schema v1 implementation, such as Zod, Valibot or ArkType. It validates and types each record before `mapRecord`, which becomes optional. Validation issues report the `path` of the invalid field, with the new code `SCHEMA_ERROR`, and `includeSchemaMessages` copies the schema's messages into them.
 - `concurrency` commits up to 16 batches at the same time. The checkpoint advances only over batches whose predecessors are confirmed, and a failure waits for the batches in flight before rejecting.
