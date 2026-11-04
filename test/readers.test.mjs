@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { csvReader, jsonlReader } from '../dist/readers.js';
+import { csvReader, jsonlReader } from '../dist/index.js';
 
 async function* pieces(input, size = 3) {
   const bytes = typeof input === 'string' ? Buffer.from(input) : input;

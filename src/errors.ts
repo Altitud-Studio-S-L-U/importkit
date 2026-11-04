@@ -23,3 +23,11 @@ export class ImportKitError extends Error {
     this.recordIndex = options.recordIndex;
   }
 }
+
+export function checkAbort(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new ImportKitError('ABORTED', 'Import cancelled.');
+}
+
+export function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
+}

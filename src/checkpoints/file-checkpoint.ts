@@ -3,58 +3,9 @@ import { lstat, open, realpath, rename, unlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { ImportKitError } from './errors.js';
-
-export interface Checkpoint {
-  readonly version: 1;
-  readonly importId: string;
-  readonly transformVersion: string;
-  readonly readerId: string;
-  readonly sourceHash: string;
-  readonly processedRecords: number;
-  readonly completed: boolean;
-}
-
-const maxCheckpointBytes = 16_384;
-const checkpointKeys = [
-  'version', 'importId', 'transformVersion', 'readerId',
-  'sourceHash', 'processedRecords', 'completed',
-] as const;
-
-function hasCode(error: unknown, code: string): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
-}
-
-function checkpointError(message: string, cause?: unknown): ImportKitError {
-  return new ImportKitError('CHECKPOINT_ERROR', message, cause === undefined ? {} : { cause });
-}
-
-function validateCheckpoint(value: unknown): Checkpoint {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw checkpointError('The checkpoint must be a valid metadata object.');
-  }
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).length !== checkpointKeys.length
-    || !checkpointKeys.every((key) => Object.hasOwn(record, key))
-    || record.version !== 1
-    || typeof record.importId !== 'string' || record.importId.length === 0
-    || typeof record.transformVersion !== 'string' || record.transformVersion.length === 0
-    || typeof record.readerId !== 'string' || record.readerId.length === 0
-    || typeof record.sourceHash !== 'string' || !/^[a-f0-9]{64}$/u.test(record.sourceHash)
-    || !Number.isSafeInteger(record.processedRecords) || (record.processedRecords as number) < 0
-    || typeof record.completed !== 'boolean') {
-    throw checkpointError('The checkpoint has an unsupported or invalid schema.');
-  }
-  return {
-    version: 1,
-    importId: record.importId,
-    transformVersion: record.transformVersion,
-    readerId: record.readerId,
-    sourceHash: record.sourceHash,
-    processedRecords: record.processedRecords as number,
-    completed: record.completed,
-  };
-}
+import { hasErrorCode, ImportKitError } from '../errors.js';
+import { checkpointError, maxCheckpointBytes, validateCheckpoint } from './checkpoint.js';
+import type { Checkpoint } from './checkpoint.js';
 
 async function readBoundedRegularFile(path: string, maxBytes: number): Promise<Buffer> {
   const entry = await lstat(path);
@@ -103,7 +54,7 @@ export async function readCheckpoint(path: string): Promise<Checkpoint | undefin
     const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     return validateCheckpoint(JSON.parse(text) as unknown);
   } catch (error) {
-    if (hasCode(error, 'ENOENT')) return undefined;
+    if (hasErrorCode(error, 'ENOENT')) return undefined;
     if (error instanceof ImportKitError) throw error;
     throw checkpointError('Unable to read valid checkpoint metadata.', error);
   }
@@ -113,7 +64,7 @@ function unsupportedDirectorySync(error: unknown): boolean {
   const codes = process.platform === 'win32'
     ? ['EPERM', 'EISDIR', 'EINVAL', 'EBADF']
     : ['EINVAL', 'ENOTSUP'];
-  return codes.some((code) => hasCode(error, code));
+  return codes.some((code) => hasErrorCode(error, code));
 }
 
 async function syncDirectory(path: string): Promise<void> {
@@ -142,7 +93,7 @@ export async function writeCheckpoint(path: string, state: Checkpoint): Promise<
         throw checkpointError('The checkpoint destination must be a regular file, not a symbolic link.');
       }
     } catch (error) {
-      if (!hasCode(error, 'ENOENT')) throw error;
+      if (!hasErrorCode(error, 'ENOENT')) throw error;
     }
 
     temporaryPath = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
@@ -165,7 +116,7 @@ export async function writeCheckpoint(path: string, state: Checkpoint): Promise<
     }
     if (temporaryPath !== undefined) {
       try { await unlink(temporaryPath); } catch (error) {
-        if (!hasCode(error, 'ENOENT')) {
+        if (!hasErrorCode(error, 'ENOENT')) {
           failure = failure === undefined ? error : new AggregateError([failure, error], 'Checkpoint cleanup failed.');
         }
       }
@@ -182,7 +133,7 @@ export async function acquireCheckpointLock(path: string): Promise<() => Promise
   try {
     handle = await open(lockPath, 'wx', 0o600);
   } catch (error) {
-    if (hasCode(error, 'EEXIST')) {
+    if (hasErrorCode(error, 'EEXIST')) {
       throw new ImportKitError('IMPORT_LOCKED', 'This checkpoint is already locked. Verify the original process has stopped before removing its lock.');
     }
     throw checkpointError('Unable to acquire the checkpoint lock.', error);
@@ -206,7 +157,7 @@ export async function acquireCheckpointLock(path: string): Promise<() => Promise
         await unlink(lockPath);
       }
     } catch (unlinkError) {
-      if (!hasCode(unlinkError, 'ENOENT')) failures.push(unlinkError);
+      if (!hasErrorCode(unlinkError, 'ENOENT')) failures.push(unlinkError);
     }
     try { await handle.close(); } catch (closeError) { failures.push(closeError); }
     throw checkpointError('Unable to initialize the checkpoint lock.', new AggregateError(failures));
@@ -228,7 +179,7 @@ export async function acquireCheckpointLock(path: string): Promise<() => Promise
       await unlink(lockPath);
       released = true;
     } catch (error) {
-      if (hasCode(error, 'ENOENT')) {
+      if (hasErrorCode(error, 'ENOENT')) {
         released = true;
         return;
       }

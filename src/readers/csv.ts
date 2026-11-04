@@ -1,22 +1,11 @@
 import { parse } from 'csv-parse';
-import { ImportKitError } from './errors.js';
-import type { RecordReader, ReaderLimits } from './types.js';
-
-function assertLimit(limits: ReaderLimits): void {
-  if (!Number.isSafeInteger(limits.maxRecordBytes) || limits.maxRecordBytes < 1) {
-    throw new ImportKitError('INVALID_OPTIONS', 'maxRecordBytes must be a positive safe integer.');
-  }
-}
-
-function limitError(): ImportKitError {
-  return new ImportKitError('LIMIT_EXCEEDED', 'A serialized record exceeds maxRecordBytes.');
-}
+import { hasErrorCode, ImportKitError } from '../errors.js';
+import type { RecordReader } from '../types.js';
+import { assertReaderLimits, recordSizeError } from './shared.js';
 
 function csvError(error: unknown): ImportKitError {
   if (error instanceof ImportKitError) return error;
-  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'CSV_MAX_RECORD_SIZE') {
-    return limitError();
-  }
+  if (hasErrorCode(error, 'CSV_MAX_RECORD_SIZE')) return recordSizeError();
   // csv-parse errors may contain source values; keep those out of the public error.
   return new ImportKitError('PARSE_ERROR', 'Invalid CSV input.');
 }
@@ -40,7 +29,7 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
   return {
     id: `csv:v1:utf8-header:${delimiter.charCodeAt(0).toString(16)}`,
     async *read(chunks, limits) {
-      assertLimit(limits);
+      assertReaderLimits(limits);
       let completedBytes = 0;
       let offeredBytes = 0;
       // csv-parse retains a few UTF-8 bytes to distinguish delimiters, escaped
@@ -56,7 +45,7 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
         relax_column_count: false,
         max_record_size: limits.maxRecordBytes,
         on_record: (record: string[], info) => {
-          if (info.bytes - completedBytes > limits.maxRecordBytes) throw limitError();
+          if (info.bytes - completedBytes > limits.maxRecordBytes) throw recordSizeError();
           completedBytes = info.bytes;
           return record;
         },
@@ -71,7 +60,7 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
             let offset = 0;
             while (offset < chunk.byteLength) {
               const capacity = limits.maxRecordBytes + lookaheadBytes - (offeredBytes - completedBytes);
-              if (capacity <= 0) throw limitError();
+              if (capacity <= 0) throw recordSizeError();
               const end = Math.min(chunk.byteLength, offset + capacity, offset + 16_384);
               const part = chunk.subarray(offset, end);
               validateUtf8(decoder, part);
@@ -79,7 +68,7 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
               await new Promise<void>((resolve, reject) => {
                 parser.write(part, (error) => error ? reject(csvError(error)) : resolve());
               });
-              if (offeredBytes - completedBytes >= limits.maxRecordBytes + lookaheadBytes) throw limitError();
+              if (offeredBytes - completedBytes >= limits.maxRecordBytes + lookaheadBytes) throw recordSizeError();
               offset = end;
             }
           }
@@ -113,57 +102,6 @@ export function csvReader(options: { readonly delimiter?: string } = {}): Record
         parser.destroy();
         await producer;
       }
-    },
-  };
-}
-
-/** Strict JSON Lines; empty physical lines are errors, and a final newline is optional. */
-export function jsonlReader(): RecordReader {
-  return {
-    id: 'jsonl:v1:utf8-strict',
-    async *read(chunks, limits) {
-      assertLimit(limits);
-      let parts: Uint8Array[] = [];
-      let bytes = 0;
-      let firstLine = true;
-
-      const append = (part: Uint8Array): void => {
-        if (bytes + part.byteLength > limits.maxRecordBytes) throw limitError();
-        if (part.byteLength > 0) parts.push(part);
-        bytes += part.byteLength;
-      };
-      const readLine = (): unknown => {
-        let text: string;
-        try {
-          text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(parts, bytes));
-        } catch {
-          throw new ImportKitError('PARSE_ERROR', 'Input must contain valid UTF-8.');
-        }
-        parts = [];
-        bytes = 0;
-        if (firstLine) text = text.replace(/^\uFEFF/u, '');
-        firstLine = false;
-        if (text.endsWith('\r')) text = text.slice(0, -1);
-        if (text.trim().length === 0) throw new ImportKitError('PARSE_ERROR', 'JSON Lines input must not contain empty records.');
-        try {
-          return JSON.parse(text) as unknown;
-        } catch {
-          throw new ImportKitError('PARSE_ERROR', 'Invalid JSON Lines input.');
-        }
-      };
-
-      for await (const chunk of chunks) {
-        let offset = 0;
-        for (let index = 0; index < chunk.byteLength; index++) {
-          if (chunk[index] !== 10) continue;
-          append(chunk.subarray(offset, index));
-          if (bytes + 1 > limits.maxRecordBytes) throw limitError();
-          yield readLine();
-          offset = index + 1;
-        }
-        append(chunk.subarray(offset));
-      }
-      if (bytes > 0) yield readLine();
     },
   };
 }
