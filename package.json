@@ -28,6 +28,7 @@
     "demo:transactional": "npm run build && node examples/transactional.mjs",
     "benchmark": "npm run build && node benchmarks/import.mjs",
     "benchmark:large": "npm run build && node benchmarks/large-files.mjs",
+    "benchmark:throughput": "npm run build && node benchmarks/throughput.mjs",
     "check:docs": "npm run build && node scripts/check-docs.mjs",
     "check": "npm run typecheck && npm test && node scripts/check-docs.mjs"
   },

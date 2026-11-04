@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, open, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { release } from 'node:os';
+import { availableParallelism } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { fileCheckpointStore, fileSource, importFile, jsonlReader, validateFile } from '../dist/index.js';
@@ -96,7 +96,7 @@ try {
 
   console.log(JSON.stringify({
     data: { synthetic: true, format: 'JSON Lines', records: rows, sourceBytes, destinationBytes, batchSize, sourceHash: imported.result.sourceHash },
-    environment: { node: process.version, platform: process.platform, architecture: process.arch, osRelease: release() },
+    environment: { node: process.version, platform: process.platform, architecture: process.arch, availableParallelism: availableParallelism() },
     validation: validation.measurement,
     import: { ...imported.measurement, committedBatches: imported.result.committedBatches },
     processHighWaterRssBytes: process.resourceUsage().maxRSS * 1_024,
@@ -107,6 +107,7 @@ try {
       import: 'Fresh import: source fingerprint, parsing and mapping, append-only JSONL destination plus fsync per batch, and local checkpoint persistence. This benchmark sink does not deduplicate replays.',
       memory: 'Observed samples every 10 ms and 1,000 mapped records, and at destination commits. Process high-water RSS includes input generation and both phases.',
       scope: 'One local synthetic workload; timings and memory are observations, not universal throughput or memory guarantees.',
+      reporting: 'The report omits the CPU model, memory size, kernel version, host name and local paths, so it can be published.',
     },
   }, null, 2));
 } finally {
