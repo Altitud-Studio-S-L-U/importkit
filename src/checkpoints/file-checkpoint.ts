@@ -1,11 +1,13 @@
 import { constants } from 'node:fs';
+import type { BigIntStats } from 'node:fs';
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { hasErrorCode, ImportKitError } from '../errors.js';
+import { sourceReadFlags } from '../file-source.js';
+import type { Checkpoint, CheckpointStore } from '../types.js';
 import { checkpointError, maxCheckpointBytes, validateCheckpoint } from './checkpoint.js';
-import type { Checkpoint } from './checkpoint.js';
 
 async function readBoundedRegularFile(path: string, maxBytes: number): Promise<Buffer> {
   const entry = await lstat(path);
@@ -187,4 +189,68 @@ export async function acquireCheckpointLock(path: string): Promise<() => Promise
       throw checkpointError('Unable to release the checkpoint lock.', error);
     }
   };
+}
+
+/** Checkpoints in a local JSON file, replaced atomically, with an exclusive lock file beside it. */
+export class FileCheckpointStore implements CheckpointStore {
+  readonly #path: string;
+  #resolved: string | undefined;
+
+  constructor(path: string) {
+    if (typeof path !== 'string' || path.length === 0 || path.includes('\0')) {
+      throw new ImportKitError('INVALID_OPTIONS', 'A checkpoint path must be a nonempty filesystem path.');
+    }
+    this.#path = path;
+  }
+
+  /** The checkpoint file and its lock. The directory is resolved on first use and reused afterwards. */
+  async paths(): Promise<{ readonly checkpoint: string; readonly lock: string }> {
+    this.#resolved ??= await canonicalCheckpointPath(this.#path);
+    return { checkpoint: this.#resolved, lock: `${this.#resolved}.lock` };
+  }
+
+  async lock(): Promise<() => Promise<void>> {
+    return acquireCheckpointLock((await this.paths()).checkpoint);
+  }
+
+  async load(): Promise<Checkpoint | undefined> {
+    return readCheckpoint((await this.paths()).checkpoint);
+  }
+
+  async save(checkpoint: Checkpoint): Promise<void> {
+    await writeCheckpoint((await this.paths()).checkpoint, checkpoint);
+  }
+
+  /** Rejects a source path that names the checkpoint file or its lock. */
+  async assertSeparatePath(sourcePath: string): Promise<void> {
+    const paths = await this.paths();
+    if (sourcePath === paths.checkpoint || sourcePath === paths.lock) {
+      throw new ImportKitError('INVALID_OPTIONS', 'Source, checkpoint, and lock must be different files.');
+    }
+  }
+
+  /** Compares file identity as well as paths, so a hard link cannot make the checkpoint or its lock overwrite the source. */
+  async assertSeparateFile(source: BigIntStats): Promise<void> {
+    const paths = await this.paths();
+    for (const path of [paths.checkpoint, paths.lock]) {
+      let reserved: FileHandle | undefined;
+      try {
+        reserved = await open(path, sourceReadFlags);
+        const state = await reserved.stat({ bigint: true });
+        if (state.dev === source.dev && state.ino === source.ino) {
+          throw new ImportKitError('INVALID_OPTIONS', 'Source, checkpoint, and lock must be different files.');
+        }
+      } catch (error) {
+        if (error instanceof ImportKitError) throw error;
+        if (!hasErrorCode(error, 'ENOENT')) throw checkpointError('Unable to inspect the checkpoint path.', error);
+      } finally {
+        await reserved?.close();
+      }
+    }
+  }
+}
+
+/** Keeps progress in a local file. Its directory must exist; the file and `<path>.lock` are created as needed. */
+export function fileCheckpointStore(path: string): CheckpointStore {
+  return new FileCheckpointStore(path);
 }

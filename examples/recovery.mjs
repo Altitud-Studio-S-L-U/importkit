@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { csvReader, fileSource, importFile, ImportKitError } from '../dist/index.js';
+import { csvReader, fileCheckpointStore, fileSource, importFile, ImportKitError } from '../dist/index.js';
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
 const scratchRoot = join(exampleDirectory, '..', '.tmp');
@@ -38,7 +38,7 @@ try {
     reader: csvReader(),
     importId: 'fictional-orders-demo',
     transformVersion: 'orders-v1',
-    checkpointPath: join(scratchDirectory, 'orders.checkpoint.json'),
+    checkpointStore: fileCheckpointStore(join(scratchDirectory, 'orders.checkpoint.json')),
     batchSize: 2,
     mapRecord(input) {
       if (input === null || typeof input !== 'object' || Array.isArray(input)) {

@@ -11,11 +11,12 @@ Do not include credentials, customer files, private checkpoints, or exploit deta
 ## Integration boundaries
 
 - Validate and authorize file paths before passing them to ImportKit. The library is not an upload boundary or path sandbox.
-- Use immutable, application-owned source files and a local checkpoint directory with appropriate filesystem permissions.
+- Use immutable, application-owned source files.
+- Keep checkpoints where only the importing service can write them: a local directory with restrictive permissions, or a table that service owns. ImportKit validates a loaded checkpoint's schema and identity, but a well-formed checkpoint written by someone else for the same import would still skip records.
 - Treat all parsed values as untrusted. Validate them before SQL, shell commands, templates, or other sensitive sinks.
 - Keep resource limits enabled and bound the work performed by custom readers, mapping, and destination callbacks.
 - Make destination writes idempotent. Checkpoint recovery permits repeated deliveries and cannot undo external side effects.
 - Avoid logging raw records or underlying error causes without reviewing their contents.
-- Checkpoint locks coordinate one local checkpoint path. Do not rely on them as a distributed authorization or locking system.
+- The file checkpoint store's lock coordinates one local path. A custom store coordinates runs only if its `lock()` does. Neither is an authorization mechanism.
 
 See the [README recovery contract](README.md#the-recovery-contract) for the current persistence and coordination limits.

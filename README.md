@@ -27,7 +27,7 @@ Built by [Altitud Studio](https://altitudstudio.ad/en/). MIT licensed. Source ve
 | File readers | CSV with a header row; JSON Lines / NDJSON |
 | Processing | Async mapping and one destination batch at a time |
 | Prevalidation | Read-only traversal, bounded mapping issues, explicit incomplete parsing reports |
-| Recovery | SHA-256 source identity, validated checkpoints, stable record IDs |
+| Recovery | SHA-256 source identity, validated checkpoints in a file or your own store, stable record IDs |
 | Resource controls | Source bytes, record bytes/count, records per batch, and optional measured batch bytes |
 | Failure handling | Fail-fast imports, validation issue counts, operational errors, cooperative cancellation |
 | Integration | A TypeScript library with a format-independent `RecordReader` contract |
@@ -50,7 +50,11 @@ The first demo validates synthetic CSV records: it counts two invalid records wh
 
 The recovery demo imports five fictional orders into a local SQLite database. It deliberately throws **after** the first database commit, before ImportKit can save that batch's checkpoint. A second run replays those records and the destination deduplicates them by record ID.
 
-Expected recovery result: **seven delivery attempts, five stored records, two deduplicated replays**. This is a fault simulation, not a benchmark or a claim of exactly-once delivery. The example uses Node's built-in `node:sqlite`; Node versions that label it experimental may print a warning. The demos remove their own temporary files after running. Run either separately with `npm run demo:validation` or `npm run demo:recovery`.
+Expected recovery result: **seven delivery attempts, five stored records, two deduplicated replays**. This is a fault simulation, not a benchmark or a claim of exactly-once delivery.
+
+The transactional demo repeats the same failure with the checkpoint stored in the orders database, inside each batch's transaction. Expected result: **five delivery attempts, five stored records, no replays**.
+
+The examples use Node's built-in `node:sqlite`; Node versions that label it experimental may print a warning. The demos remove their own temporary files after running. Run one separately with `npm run demo:validation`, `npm run demo:recovery` or `npm run demo:transactional`.
 
 Install the published package from [npm](https://www.npmjs.com/package/@altitud-studio/importkit):
 
@@ -72,14 +76,14 @@ npm install /absolute/path/to/altitud-studio-importkit-0.3.0.tgz
 ## Use in your backend
 
 ```ts
-import { csvReader, fileSource, importFile } from '@altitud-studio/importkit';
+import { csvReader, fileCheckpointStore, fileSource, importFile } from '@altitud-studio/importkit';
 
 const result = await importFile({
   source: fileSource('./orders.csv'),
   reader: csvReader(),
   importId: 'orders-2026-11',
   transformVersion: 'orders-v1',
-  checkpointPath: './orders.checkpoint.json',
+  checkpointStore: fileCheckpointStore('./orders.checkpoint.json'),
   batchSize: 500,
 
   mapRecord(input, context) {
@@ -111,7 +115,7 @@ The result contains `processedRecords` (the total source record count, including
 `validateFile` accepts `source`, `reader`, `importId`, `transformVersion`, `mapRecord`, optional `limits` and `signal`, and optional `maxIssues`. It has no destination or checkpoint option. It awaits each mapping callback and discards the transformed value.
 
 ```ts
-import { csvReader, fileSource, importFile, validateFile } from '@altitud-studio/importkit';
+import { csvReader, fileCheckpointStore, fileSource, importFile, validateFile } from '@altitud-studio/importkit';
 
 const file = {
   source: fileSource('./orders.csv'),
@@ -127,7 +131,7 @@ const report = await validateFile({ ...file, maxIssues: 100 });
 if (report.status === 'valid') {
   await importFile({
     ...file,
-    checkpointPath: './orders.checkpoint.json',
+    checkpointStore: fileCheckpointStore('./orders.checkpoint.json'),
     async commitBatch(records) {
       await saveOrdersIdempotently(records);
     },
@@ -174,19 +178,25 @@ parse -> map -> commitBatch -> save checkpoint -> next batch
 3. After `commitBatch` resolves, ImportKit saves the checkpoint. A partial final batch follows the same contract.
 4. On resume, the reader starts from the beginning and skips confirmed record ordinals. This handles CSV records containing embedded newlines without guessing byte offsets. Completed imports are also reparsed to revalidate the source and current reader limits; their confirmed records are not mapped or delivered again.
 
-**Delivery is at least once.** The destination and local checkpoint do not share a transaction. A process can fail after destination writes succeed and before the checkpoint is saved. A destination callback can also persist data and then reject. Those records may be delivered again with the same IDs.
+**Delivery is at least once.** By default the destination and the checkpoint do not share a transaction. A process can fail after destination writes succeed and before the checkpoint is saved. A destination callback can also persist data and then reject. Those records may be delivered again with the same IDs.
 
 The destination must deduplicate IDs or provide equivalent idempotency. If it partially writes a batch, already-written records must tolerate replay. ImportKit cannot make external emails, payments, or other side effects transactional.
+
+### Keep progress in your database
+
+`checkpointStore` accepts any object with `load()` and `save()`, plus an optional `lock()`. `commitBatch` receives `{ checkpoint }`: the progress once that batch is committed. When the destination writes that checkpoint in the same transaction as the records, and `load()` reads it from there, a failure between the commit and ImportKit's own `save()` no longer causes a replay. The [transactional example](examples/transactional.mjs) does this with SQLite.
+
+ImportKit validates the schema and identity of every loaded checkpoint before resuming. Store failures throw `CHECKPOINT_ERROR` with the original error as the cause, unless the store throws an `ImportKitError` such as `IMPORT_LOCKED`.
 
 Keep the source file **immutable for the entire run**. A preflight hash identifies its content for resume; it does not turn a concurrently edited file into a stable snapshot. If necessary, copy an incoming upload into an application-owned, immutable staging location first.
 
 ### Checkpoints and concurrent runs
 
-Checkpoints contain progress and identity metadata, not raw records. ImportKit writes a temporary checkpoint, flushes it, then renames it into place. The implementation also attempts directory synchronization where the platform supports it. Filesystem and operating-system durability guarantees still apply.
+Checkpoints contain progress and identity metadata, not raw records. `fileCheckpointStore` writes a temporary checkpoint, flushes it, then renames it into place. It also attempts directory synchronization where the platform supports it. Filesystem and operating-system durability guarantees still apply.
 
-An exclusive `<checkpointPath>.lock` file prevents concurrent runs using that checkpoint. A hard process termination can leave the lock behind. Verify that the original process has stopped before manually removing that specific lock. Lock age alone is not evidence that a process is dead.
+An exclusive `<path>.lock` file prevents concurrent runs using that checkpoint file. A hard process termination can leave the lock behind. Verify that the original process has stopped before manually removing that specific lock. Lock age alone is not evidence that a process is dead.
 
-The checkpoint's parent directory must already exist; ImportKit does not create it. Use a local filesystem and one checkpoint per logical import. Shared filesystems, distributed locking, automatic stale-lock recovery, and multiple writers to the same destination are outside this version's coordination contract. Two different checkpoint paths do not coordinate with each other.
+The checkpoint file's parent directory must already exist; ImportKit does not create it. Use a local filesystem and one checkpoint per logical import. Shared filesystems, automatic stale-lock recovery, and multiple writers to the same destination are outside this version's coordination contract. Two different checkpoint paths do not coordinate with each other. A custom store coordinates concurrent runs only if its `lock()` does, for example with a database advisory lock.
 
 ### Limits and backpressure
 
@@ -219,7 +229,7 @@ await importFile({
   reader: csvReader(),
   importId: 'orders-2026-11',
   transformVersion: 'encoded-orders-v1',
-  checkpointPath: './orders.checkpoint.json',
+  checkpointStore: fileCheckpointStore('./orders.checkpoint.json'),
   batchSize: 500,
   maxBatchBytes: 4 * 1024 * 1024, // 4 MiB of measured record payloads
   mapRecord(input) {

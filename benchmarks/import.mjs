@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { release } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { fileSource, importFile, jsonlReader, validateFile } from '../dist/index.js';
+import { fileCheckpointStore, fileSource, importFile, jsonlReader, validateFile } from '../dist/index.js';
 
 const rows = Number(process.argv[2] ?? 100_000);
 const batchSize = Number(process.argv[3] ?? 1_000);
@@ -81,7 +81,7 @@ try {
   let writtenRecords = 0;
   const imported = await measure(() => importFile({
     ...options,
-    checkpointPath: join(directory, 'progress.checkpoint.json'),
+    checkpointStore: fileCheckpointStore(join(directory, 'progress.checkpoint.json')),
     batchSize,
     async commitBatch(records) {
       observe();
