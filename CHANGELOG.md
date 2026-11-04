@@ -9,9 +9,11 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 - `importFile` and `validateFile` take `source: fileSource(path)` and a separate `reader` option instead of `source: { path, reader }`.
 - `importFile` takes `checkpointStore` instead of `checkpointPath`. `fileCheckpointStore(path)` keeps the previous behavior, and checkpoint files written by 0.3 still resume.
 - Custom readers yield `{ value, line }` records instead of bare values. A reader that yields anything else fails with `INVALID_OPTIONS`.
+- Checkpoints are saved as version 2, which names the source with `sourceIdentity` instead of `sourceHash`. Checkpoints written by 0.3 are still read and resume; 0.3 cannot read a version 2 checkpoint.
 
 ### Added
 
+- Sources: `source` accepts any `ByteSource`, so an import can read storage other than local files. ImportKit validates what a source returns, counts its bytes and reports their SHA-256.
 - Schemas: `schema` accepts any Standard Schema v1 implementation, such as Zod, Valibot or ArkType. It validates and types each record before `mapRecord`, which becomes optional. Validation issues report the `path` of the invalid field, with the new code `SCHEMA_ERROR`, and `includeSchemaMessages` copies the schema's messages into them.
 - `concurrency` commits up to 16 batches at the same time. The checkpoint advances only over batches whose predecessors are confirmed, and a failure waits for the batches in flight before rejecting.
 - `onProgress` reports the saved progress and the bytes read after every checkpoint save. A callback that throws stops the run with the new code `PROGRESS_ERROR`.
@@ -33,6 +35,7 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 - Failures to inspect or close the source are reported as `SOURCE_ERROR` instead of escaping as raw Node.js errors or as `PARSE_ERROR`.
 - Failures to inspect the checkpoint path are reported as `CHECKPOINT_ERROR` instead of escaping as raw Node.js errors.
 - A callback or reader that fails after the run is cancelled reports `ABORTED` from `importFile`, as it already did from `validateFile`.
+- When closing the source or releasing the checkpoint lock fails after a run has already failed, the run rejects with its original error instead of the cleanup failure.
 
 ### Migration from 0.3
 

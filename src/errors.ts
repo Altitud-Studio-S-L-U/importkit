@@ -42,3 +42,20 @@ export function checkAbort(signal: AbortSignal | undefined): void {
 export function hasErrorCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
+
+/** Runs `work`, then `cleanup`. A cleanup failure is thrown only when the work succeeded, so it never hides the first error. */
+export async function withCleanup<R>(work: () => Promise<R>, cleanup: () => Promise<void>): Promise<R> {
+  let result: R;
+  try {
+    result = await work();
+  } catch (error) {
+    try {
+      await cleanup();
+    } catch {
+      // The work's failure explains the run; a lock or source left open shows up on the next run.
+    }
+    throw error;
+  }
+  await cleanup();
+  return result;
+}

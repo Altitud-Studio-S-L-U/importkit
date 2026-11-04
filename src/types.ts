@@ -36,19 +36,50 @@ export interface RecordContext {
   readonly line?: number;
 }
 
+/** Where the bytes of a run come from. `fileSource()` and `httpSource()` create one; other storage can implement it. */
+export interface ByteSource {
+  /** Opens the content for one run. ImportKit closes what it returns when the run ends. */
+  open(context: SourceContext): Promise<OpenedSource>;
+}
+
+export interface SourceContext {
+  /** The run's maxSourceBytes. A larger source should fail with LIMIT_EXCEEDED before its content is read. */
+  readonly maxBytes: number;
+  readonly signal?: AbortSignal;
+}
+
+/** One version of a source's content, opened for one run. */
+export interface OpenedSource {
+  /**
+   * Names this version of the content, such as its SHA-256 or a strong ETag, in at most 512 characters. It must change
+   * whenever the content changes: record IDs and checkpoints derive from it.
+   */
+  readonly identity: string;
+  /** Size of the content in bytes. */
+  readonly size: number;
+  /** SHA-256 of the content in lowercase hexadecimal, when it is known before reading. ImportKit checks the bytes against it. */
+  readonly sha256?: string;
+  /** Yields the content once, from its first byte. */
+  bytes(): AsyncIterable<Uint8Array>;
+  /** Rejects with SOURCE_CHANGED when the content has visibly changed. Called before each batch and when a run ends. */
+  assertUnchanged?(): Promise<void>;
+  /** Releases what open() acquired. Called once, however the run ends. */
+  close?(): Promise<void>;
+}
+
 /** A local file, created with `fileSource()`. It must stay unchanged while a run reads it. */
-export interface FileSource {
+export interface FileSource extends ByteSource {
   readonly path: string;
 }
 
 /** Progress of one logical import, kept between runs by a checkpoint store. */
 export interface Checkpoint {
-  readonly version: 1;
+  readonly version: 2;
   readonly importId: string;
   readonly transformVersion: string;
   readonly readerId: string;
-  /** SHA-256 of the source content. */
-  readonly sourceHash: string;
+  /** The source's identity: the SHA-256 of a file's content, or the strong ETag of an HTTP response. */
+  readonly sourceIdentity: string;
   /** Records the destination has confirmed, counted from the start of the source. */
   readonly processedRecords: number;
   readonly completed: boolean;
@@ -91,7 +122,8 @@ export interface ImportProgress {
  * values that reach the destination: what `mapRecord` returns, or the schema's output without `mapRecord`.
  */
 export interface ImportOptions<I = unknown, T = I> {
-  readonly source: FileSource;
+  /** Where the content comes from, such as `fileSource(path)` or `httpSource(url)`. */
+  readonly source: ByteSource;
   readonly reader: RecordReader;
   readonly importId: string;
   /** Change when the schema, mapping or destination semantics change. */
@@ -121,6 +153,7 @@ export interface ImportResult {
   readonly resumedFrom: number;
   readonly processedRecords: number;
   readonly committedBatches: number;
+  /** SHA-256 of the source content. */
   readonly sourceHash: string;
 }
 
@@ -152,6 +185,7 @@ export interface ValidationParseError {
 }
 
 interface ValidationSummary {
+  /** SHA-256 of the source content. */
   readonly sourceHash: string;
   readonly processedRecords: number;
   readonly validRecords: number;

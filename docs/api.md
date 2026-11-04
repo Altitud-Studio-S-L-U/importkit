@@ -17,7 +17,7 @@ Everything below is exported by `@altitud-studio/importkit` and available throug
 
 | Term | Meaning |
 | --- | --- |
-| Source | The file to import, created with `fileSource()`. It must not change while a run reads it. |
+| Source | Where the bytes come from: `fileSource()` or your own `ByteSource`. Its content must not change while a run reads it. |
 | Reader | Decodes the source's bytes into records: `csvReader()`, `jsonlReader()` or your own. |
 | Record | One decoded row or line. The schema and `mapRecord` turn it into the value your destination receives. |
 | Batch | The records passed to one `commitBatch` call. |
@@ -33,7 +33,7 @@ Everything below is exported by `@altitud-studio/importkit` and available throug
 function importFile<I = unknown, T = I>(options: ImportOptions<I, T>): Promise<ImportResult>;
 ```
 
-Fingerprints the source, loads the saved checkpoint, then parses the source, validates and maps each record, and commits batches in source order, one at a time unless `concurrency` is above 1. Resolves once every record is committed. Any failure rejects with an [`ImportKitError`](#errors).
+Opens the source and establishes its identity, loads the saved checkpoint, then parses the source, validates and maps each record, and commits batches in source order, one at a time unless `concurrency` is above 1. Resolves once every record is committed. Any failure rejects with an [`ImportKitError`](#errors).
 
 | Option | Type | Description |
 | --- | --- | --- |
@@ -65,7 +65,7 @@ Fingerprints the source, loads the saved checkpoint, then parses the source, val
 | `resumedFrom` | Records the destination had already confirmed when the run started. |
 | `processedRecords` | Records in the source, including those skipped because they were confirmed earlier. |
 | `committedBatches` | Batches committed during this run. |
-| `sourceHash` | SHA-256 of the source content, as a lowercase hexadecimal string. |
+| `sourceHash` | SHA-256 of the bytes read from the source, as a lowercase hexadecimal string. |
 
 Running an import that has already completed parses the source again, so that the current reader and limits still apply, and commits nothing.
 
@@ -107,7 +107,9 @@ Issue and parse error messages are constant library text unless `includeSchemaMe
 function fileSource(path: string): FileSource;
 ```
 
-Selects a local file as the source. Throws `INVALID_OPTIONS` at once for an empty path or one that contains a NUL character. The file must exist when the run starts and must not change until it ends; copy an uploaded file to a location your application owns first. Validate and authorize the path before passing it: ImportKit is not a path sandbox.
+Selects a local file as the source. Throws `INVALID_OPTIONS` at once for an empty path or one that contains a NUL character. The file must exist when the run starts and must not change until it ends; copy an uploaded file to a location your application owns first. Validate and authorize the path before passing it: ImportKit is not a path sandbox. [Sources](sources.md#read-a-local-file) describes how the file is read.
+
+`FileSource` is a `ByteSource` with a `path` property. Any other object that implements [`ByteSource`](#bytesource) can be passed as `source`.
 
 ## csvReader and jsonlReader
 
@@ -144,17 +146,41 @@ interface CheckpointStore {
 
 ```ts
 interface Checkpoint {
-  readonly version: 1;
+  readonly version: 2;
   readonly importId: string;
   readonly transformVersion: string;
   readonly readerId: string;
-  readonly sourceHash: string;
+  readonly sourceIdentity: string;
   readonly processedRecords: number;
   readonly completed: boolean;
 }
 ```
 
-A checkpoint holds identity and progress, never record data. Store it as JSON and return it unchanged.
+A checkpoint holds identity and progress, never record data. Store it as JSON and return it unchanged. `sourceIdentity` is the source's `identity`: the SHA-256 of a file's content. ImportKit also reads the version 1 checkpoints that 0.3 wrote, whose `sourceHash` field becomes `sourceIdentity`, and saves version 2 from then on.
+
+### ByteSource
+
+```ts
+interface ByteSource {
+  open(context: SourceContext): Promise<OpenedSource>;
+}
+
+interface SourceContext {
+  readonly maxBytes: number;
+  readonly signal?: AbortSignal;
+}
+
+interface OpenedSource {
+  readonly identity: string;
+  readonly size: number;
+  readonly sha256?: string;
+  bytes(): AsyncIterable<Uint8Array>;
+  assertUnchanged?(): Promise<void>;
+  close?(): Promise<void>;
+}
+```
+
+[Sources](sources.md#how-importkit-uses-a-source) describes the contract and shows a custom source.
 
 ### CommitContext
 
@@ -255,7 +281,7 @@ Every failure rejects with an `ImportKitError`. Its `code` identifies the failur
 | --- | --- | --- |
 | `INVALID_OPTIONS` | An option is missing, malformed or out of range, the source is the checkpoint file or its lock, or a reader yielded something other than `{ value, line }` records. | Fix the call or the reader. |
 | `SOURCE_ERROR` | The source cannot be opened, inspected, read or closed. | Check the path and permissions, then run again. |
-| `SOURCE_CHANGED` | The source changed during the run. | Import an unchanging copy. |
+| `SOURCE_CHANGED` | The source changed during the run, or produced more or fewer bytes than its size. | Import an unchanging copy. |
 | `LIMIT_EXCEEDED` | A source, record, batch or checkpoint value exceeds its limit. | Reject the file or raise the limit. |
 | `PARSE_ERROR` | The reader found a structural error. | Reject or correct the file. |
 | `SCHEMA_ERROR` | The schema rejected a record or threw. For a rejection, `cause` is the schema's result, whose `issues` can quote record values. | Correct the file or the schema. Validating first avoids partial imports. |

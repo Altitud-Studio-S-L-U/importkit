@@ -5,7 +5,7 @@ This page describes what ImportKit guarantees when a run stops, where checkpoint
 ## How a run proceeds
 
 1. Lock the checkpoint store, when it supports locking.
-2. Fingerprint the source with SHA-256 before any destination write.
+2. Open the source and establish its identity before any destination write. A file's identity is the SHA-256 of its content.
 3. Load the saved checkpoint. Reject it if it describes other content, another reader or another `transformVersion`.
 4. Parse the source from the beginning. Skip the records the checkpoint already confirms, and map the rest.
 5. Group mapped records into batches and pass each batch to `commitBatch` in source order, one at a time unless `concurrency` allows more.
@@ -135,4 +135,4 @@ The lock coordinates runs on one machine that use the same path. Shared network 
 
 ## Keep the source unchanged
 
-ImportKit fingerprints the source before writing anything and checks the file's identity, size and timestamps throughout the run. A change fails the run with `SOURCE_CHANGED`. This detects edits, but it does not turn a file that another process is writing into a stable snapshot: copy uploads to a location your application owns and import that copy.
+ImportKit establishes the source's identity before writing anything. For a file, it computes the SHA-256 of the content and checks the file's identity, size and timestamps throughout the run. A change fails the run with `SOURCE_CHANGED`. This detects edits, but it does not turn a file that another process is writing into a stable snapshot: copy uploads to a location your application owns and import that copy.

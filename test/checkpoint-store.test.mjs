@@ -175,8 +175,8 @@ test('a checkpoint file written by 0.3 resumes with fileCheckpointStore', async 
   assert.equal(result.resumedFrom, 2);
   assert.deepEqual(delivered, [3, 4, 5]);
   assert.deepEqual(JSON.parse(await readFile(checkpointPath, 'utf8')), {
-    version: 1, importId: options.importId, transformVersion: options.transformVersion, readerId: options.reader.id,
-    sourceHash, processedRecords: 5, completed: true,
+    version: 2, importId: options.importId, transformVersion: options.transformVersion, readerId: options.reader.id,
+    sourceIdentity: sourceHash, processedRecords: 5, completed: true,
   });
 });
 

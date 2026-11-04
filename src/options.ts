@@ -58,11 +58,12 @@ function assertFileOptions<I, T>(options: FileOptions<I, T>): FileSettings<T> {
   }
   identity(options.importId, 'importId');
   identity(options.transformVersion, 'transformVersion');
-  if (typeof options.source?.path !== 'string' || options.source.path.length === 0) {
-    throw new ImportKitError('INVALID_OPTIONS', 'A source created with fileSource(path) is required.');
-  }
-  if (options.reader === undefined && 'reader' in options.source) {
+  const source: unknown = options.source;
+  if (options.reader === undefined && typeof source === 'object' && source !== null && 'reader' in source) {
     throw new ImportKitError('INVALID_OPTIONS', 'Pass the reader as its own option: { source: fileSource(path), reader: csvReader() }.');
+  }
+  if (typeof source !== 'object' || source === null || !('open' in source) || typeof source.open !== 'function') {
+    throw new ImportKitError('INVALID_OPTIONS', 'source must be a ByteSource, such as fileSource(path) or httpSource(url).');
   }
   identity(options.reader?.id, 'reader.id');
   if (typeof options.reader.read !== 'function') {

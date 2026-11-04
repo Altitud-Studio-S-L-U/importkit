@@ -5,11 +5,12 @@ import { assertResumable, guardCheckpointStore, initialCheckpoint } from './chec
 import type { GuardedCheckpointStore } from './checkpoints/checkpoint.js';
 import { FileCheckpointStore } from './checkpoints/file-checkpoint.js';
 import { CommitQueue } from './commit-queue.js';
-import { checkAbort, ImportKitError } from './errors.js';
-import { assertSourceState, closeSource, fingerprint, openSource } from './file-source.js';
-import type { OpenSource } from './file-source.js';
+import { checkAbort, ImportKitError, withCleanup } from './errors.js';
 import { assertImportOptions } from './options.js';
 import type { ImportSettings } from './options.js';
+import { FileByteSource } from './sources/file-source.js';
+import { openSource } from './sources/source.js';
+import type { GuardedSource } from './sources/source.js';
 import { RejectedRecord } from './transform.js';
 import { traverseRecords } from './traversal.js';
 import type { Checkpoint, ImportOptions, ImportProgress, ImportResult, RecordContext } from './types.js';
@@ -34,26 +35,21 @@ function measureBytes<T>(measure: (value: T, context: RecordContext) => number, 
   return bytes;
 }
 
-/** Imports an immutable local file in at-least-once destination batches, saving progress in source order. */
+/** Imports an unchanging source in at-least-once destination batches, saving progress in source order. */
 export async function importFile<I = unknown, T = I>(options: ImportOptions<I, T>): Promise<ImportResult> {
   const settings = assertImportOptions(options);
   checkAbort(options.signal);
-  const sourcePath = resolve(options.source.path);
   const fileStore = options.checkpointStore instanceof FileCheckpointStore ? options.checkpointStore : undefined;
-  await fileStore?.assertSeparatePath(sourcePath);
+  if (fileStore !== undefined && options.source instanceof FileByteSource) await fileStore.assertSeparatePath(resolve(options.source.path));
   const checkpoints = guardCheckpointStore(options.checkpointStore);
   const release = await checkpoints.lock();
-  try {
-    const source = await openSource(sourcePath, settings.limits.maxSourceBytes);
-    try {
-      await fileStore?.assertSeparateFile(source.state);
-      return await importOpenSource(options, settings, checkpoints, source);
-    } finally {
-      await closeSource(source.handle);
-    }
-  } finally {
-    await release();
-  }
+  return withCleanup(async () => {
+    const source = await openSource(options.source, settings.limits, options.signal);
+    return withCleanup(async () => {
+      if (fileStore !== undefined && source.fileState !== undefined) await fileStore.assertSeparateFile(source.fileState);
+      return importOpenSource(options, settings, checkpoints, source);
+    }, source.close);
+  }, release);
 }
 
 function progressReporter(onProgress: ImportOptions['onProgress'], signal: AbortSignal | undefined): ((progress: ImportProgress) => Promise<void>) | undefined {
@@ -72,24 +68,22 @@ async function importOpenSource<I, T>(
   options: ImportOptions<I, T>,
   { limits, transform, batchSize, byteBudget, concurrency }: ImportSettings<T>,
   checkpoints: GuardedCheckpointStore,
-  { handle, state }: OpenSource,
+  source: GuardedSource,
 ): Promise<ImportResult> {
-  const sourceHash = await fingerprint(handle, limits, options.signal);
-  await assertSourceState(handle, state);
   const saved = await checkpoints.load();
-  if (saved) assertResumable(saved, options, sourceHash, limits);
-  const start: Checkpoint = saved ?? initialCheckpoint(options, sourceHash);
+  if (saved) assertResumable(saved, options, source.identity, limits);
+  const start: Checkpoint = saved ?? initialCheckpoint(options, source.identity);
   if (!saved) await checkpoints.save(start);
   const resumedFrom = start.processedRecords;
-  const traversal = traverseRecords(handle, options, limits, sourceHash);
+  const traversal = traverseRecords(source, options, limits);
   const batch = new BatchBuilder<T>(batchSize, byteBudget?.maxBatchBytes);
   const queue = new CommitQueue<T>({
     concurrency,
     signal: options.signal,
     start,
-    totalBytes: Number(state.size),
+    totalBytes: source.size,
     commit: async (records, context) => {
-      await assertSourceState(handle, state);
+      await source.assertUnchanged();
       try {
         await options.commitBatch(records, context);
       } catch (error) {
@@ -144,17 +138,24 @@ async function importOpenSource<I, T>(
     }
   };
 
+  let sourceHash: string;
   try {
-    await deliver();
-    if (traversal.parsedHash() !== sourceHash) {
-      throw new ImportKitError('SOURCE_CHANGED', 'The source bytes changed between fingerprinting and parsing.');
-    }
-    await assertSourceState(handle, state);
-    if (traversal.count() < resumedFrom) throw new ImportKitError('CHECKPOINT_MISMATCH', 'Checkpoint progress exceeds the reader output.');
-    // Completed imports are parsed again so smaller limits and reader failures still apply.
-    await flush(true);
-    await queue.complete(traversal.count(), traversal.bytesRead());
-    checkAbort(options.signal);
+    sourceHash = await withCleanup(async () => {
+      await deliver();
+      // A reader may stop before the last byte; the hash and the size check cover the whole source.
+      await traversal.drain();
+      const contentHash = traversal.contentHash();
+      if (source.sha256 !== undefined && contentHash !== source.sha256) {
+        throw new ImportKitError('SOURCE_CHANGED', 'The source bytes changed between fingerprinting and parsing.');
+      }
+      await source.assertUnchanged();
+      if (traversal.count() < resumedFrom) throw new ImportKitError('CHECKPOINT_MISMATCH', 'Checkpoint progress exceeds the reader output.');
+      // Completed imports are parsed again so smaller limits and reader failures still apply.
+      await flush(true);
+      await queue.complete(traversal.count(), traversal.bytesRead());
+      checkAbort(options.signal);
+      return contentHash;
+    }, traversal.close);
   } catch (error) {
     // No callback may run once the import settles: wait for batches in flight and save the progress they confirm.
     await queue.settle();
