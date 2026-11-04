@@ -8,6 +8,13 @@ Use GitHub's **Report a vulnerability** option on this repository. If it is unav
 
 Do not put credentials, customer files, private checkpoints or exploit details in a public issue. A synthetic reproduction, the affected version or commit and the potential impact help us investigate. Fixes are released in a new version of the latest release line.
 
+## Supported versions
+
+| Version | Security fixes |
+| --- | --- |
+| 1.x | Yes |
+| 0.x | No: upgrade to 1.x, which resumes imports started with 0.3 |
+
 ## Threat model
 
 | Input | Trusted | How ImportKit handles it |

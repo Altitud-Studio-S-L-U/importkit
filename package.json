@@ -1,6 +1,6 @@
 {
   "name": "@altitud-studio/importkit",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Resumable, validated CSV and JSON Lines imports for Node.js backends.",
   "type": "module",
   "license": "MIT",
@@ -17,7 +17,7 @@
   "repository": { "type": "git", "url": "git+https://github.com/Altitud-Studio-S-L-U/importkit.git" },
   "bugs": { "url": "https://github.com/Altitud-Studio-S-L-U/importkit/issues" },
   "homepage": "https://github.com/Altitud-Studio-S-L-U/importkit#readme",
-  "keywords": ["import", "csv", "jsonl", "streaming", "checkpoint", "resumable", "typescript", "nodejs"],
+  "keywords": ["import", "csv", "jsonl", "ndjson", "streaming", "batch", "checkpoint", "resumable", "validation", "standard-schema", "s3", "typescript", "nodejs"],
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

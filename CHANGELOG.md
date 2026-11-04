@@ -4,6 +4,8 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-04
+
 ### Breaking changes
 
 - `importFile` and `validateFile` take `source: fileSource(path)` and a separate `reader` option instead of `source: { path, reader }`.
@@ -41,24 +43,30 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 
 ### Migration from 0.3
 
-```ts
-// 0.3
-await importFile({
-  source: { path: './orders.csv', reader: csvReader() },
-  checkpointPath: './orders.checkpoint.json',
-  // ...
-});
+1. Pass the source and the reader separately, and replace `checkpointPath` with a checkpoint store:
 
-// Now
-await importFile({
-  source: fileSource('./orders.csv'),
-  reader: csvReader(),
-  checkpointStore: fileCheckpointStore('./orders.checkpoint.json'),
-  // ...
-});
-```
+   ```ts
+   // 0.3
+   await importFile({
+     source: { path: './orders.csv', reader: csvReader() },
+     checkpointPath: './orders.checkpoint.json',
+     // ...
+   });
 
-Record IDs and the checkpoint file format are unchanged, so an import started with 0.3 resumes where it stopped.
+   // 1.0
+   await importFile({
+     source: fileSource('./orders.csv'),
+     reader: csvReader(),
+     checkpointStore: fileCheckpointStore('./orders.checkpoint.json'),
+     // ...
+   });
+   ```
+
+2. In a custom reader, yield `{ value, line }` for each record instead of the bare value, or `{ value }` for a format without lines.
+3. Handle the new error codes `SCHEMA_ERROR` and `PROGRESS_ERROR` wherever you switch over `ImportErrorCode`. They only occur with the new `schema` and `onProgress` options.
+4. Explicit type arguments such as `importFile<Order>(...)` still compile, but TypeScript now infers the types from `schema` and `mapRecord`, so they can go.
+
+Record IDs of file imports are unchanged, and 1.0 reads the checkpoint files that 0.3 wrote, so an import started with 0.3 resumes where it stopped. 1.0 saves checkpoints as version 2, which 0.3 cannot read: finish such an import with 1.0.
 
 ## [0.3.0] - 2026-11-03
 
@@ -79,7 +87,8 @@ Record IDs and the checkpoint file format are unchanged, so an import started wi
 
 - `importFile` with CSV and JSON Lines readers, sequential batches, stable record IDs, local checkpoints with an exclusive lock, and at-least-once recovery.
 
-[Unreleased]: https://github.com/Altitud-Studio-S-L-U/importkit/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Altitud-Studio-S-L-U/importkit/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/Altitud-Studio-S-L-U/importkit/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/Altitud-Studio-S-L-U/importkit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Altitud-Studio-S-L-U/importkit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Altitud-Studio-S-L-U/importkit/releases/tag/v0.1.0
