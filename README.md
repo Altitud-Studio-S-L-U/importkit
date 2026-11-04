@@ -50,18 +50,24 @@ console.log(`Imported ${result.processedRecords - result.resumedFrom} records in
 
 ## Validate before importing
 
-`validateFile` runs the same reader and `mapRecord` over the whole file without writing anything, and returns a report you can show to whoever sent the file.
+`validateFile` runs the reader and your rules over the whole file without writing anything, and returns a report you can send back to whoever uploaded the file. Write the rules as a schema from any [Standard Schema](https://standardschema.dev) library, such as Zod, Valibot or ArkType, as a `mapRecord` function, or both.
 
 ```ts
+import { z } from 'zod';
 import { csvReader, fileSource, validateFile } from '@altitud-studio/importkit';
+
+const orderSchema = z.object({
+  orderId: z.string().min(1),
+  sku: z.string().min(1),
+  units: z.coerce.number().int().positive(),
+});
 
 const report = await validateFile({
   source: fileSource('./uploads/orders.csv'),
   reader: csvReader(),
   importId: 'orders-2026-11',
   transformVersion: 'orders-v1',
-  mapRecord: (input) => parseOrder(input),
-  maxIssues: 100,
+  schema: orderSchema,
 });
 
 if (report.status !== 'valid') console.log(report.invalidRecords, report.issues);
@@ -69,11 +75,11 @@ if (report.status !== 'valid') console.log(report.invalidRecords, report.issues)
 
 | Status | Meaning |
 | --- | --- |
-| `valid` | The whole file parsed and every record passed `mapRecord`. |
-| `invalid` | The whole file parsed, and at least one record failed `mapRecord`. |
+| `valid` | The whole file parsed, and every record passed. |
+| `invalid` | The whole file parsed, and at least one record failed. |
 | `incomplete` | Parsing stopped at a structural error, so the rest of the file was not checked. |
 
-Each issue names the record and the line where it starts, for example `{ code: 'MAP_ERROR', recordIndex: 2, line: 3, message: 'Record mapping or validation failed.' }`. A report counts every failure but keeps at most `maxIssues` of them. It never contains record values or the messages of your exceptions.
+Each issue names the record, the line where it starts and the field that failed: `{ code: 'SCHEMA_ERROR', recordIndex: 2, line: 3, path: ['units'], message: 'The record does not match the schema.' }`. A report never contains record values or the messages of your exceptions, and contains schema messages only if you ask for them. Pass the same schema to `importFile`, and `commitBatch` receives the validated, typed values. [Validation in detail](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/validation.md)
 
 ## When a run fails
 
@@ -162,6 +168,7 @@ The demos use synthetic data. The two recovery demos use Node's built-in `node:s
 ## Documentation
 
 - [API reference](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/api.md): every option, result, type and error code.
+- [Validation](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/validation.md): schemas, reports and HTTP responses.
 - [Recovery](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/recovery.md): the checkpoint contract, custom stores, locks and concurrent runs.
 - [Readers](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/readers.md): CSV, JSON Lines and your own formats.
 - [Limits](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/docs/limits.md): resource limits and batches bounded by measured bytes.

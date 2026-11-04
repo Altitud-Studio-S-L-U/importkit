@@ -1,3 +1,5 @@
+import type { StandardSchemaV1 } from './standard-schema.js';
+
 export interface ReaderLimits {
   readonly maxRecordBytes: number;
 }
@@ -71,11 +73,15 @@ export interface CommitContext {
   readonly signal?: AbortSignal;
 }
 
-export interface ImportOptions<T> {
+/**
+ * `I` is the type `mapRecord` receives: the schema's output, or `unknown` without a schema. `T` is the type of the
+ * values that reach the destination: what `mapRecord` returns, or the schema's output without `mapRecord`.
+ */
+export interface ImportOptions<I = unknown, T = I> {
   readonly source: FileSource;
   readonly reader: RecordReader;
   readonly importId: string;
-  /** Change when mapping, validation, or destination semantics change. */
+  /** Change when the schema, mapping or destination semantics change. */
   readonly transformVersion: string;
   readonly checkpointStore: CheckpointStore;
   readonly batchSize?: number;
@@ -85,7 +91,10 @@ export interface ImportOptions<T> {
   readonly measureRecordBytes?: (value: T, context: RecordContext) => number;
   readonly limits?: Partial<ImportLimits>;
   readonly signal?: AbortSignal;
-  readonly mapRecord: (input: unknown, context: RecordContext) => T | Promise<T>;
+  /** Validates and types each parsed value before mapRecord. Any Standard Schema v1 implementation works. */
+  readonly schema?: StandardSchemaV1<unknown, I>;
+  /** Converts a parsed value, or the schema's output when there is a schema. Required without a schema. */
+  readonly mapRecord?: (input: I, context: RecordContext) => T | Promise<T>;
   /** Resolve only after durable writes. Replayed IDs must not create duplicate effects. */
   readonly commitBatch: (records: readonly ImportRecord<T>[], context: CommitContext) => Promise<void>;
 }
@@ -98,17 +107,22 @@ export interface ImportResult {
   readonly sourceHash: string;
 }
 
-export interface ValidationOptions<T> extends Pick<ImportOptions<T>, 'source' | 'reader' | 'importId' | 'transformVersion' | 'mapRecord' | 'limits' | 'signal'> {
-  /** Maximum mapping issues retained; all mapping failures are still counted. */
+export interface ValidationOptions<I = unknown, T = I>
+  extends Pick<ImportOptions<I, T>, 'source' | 'reader' | 'importId' | 'transformVersion' | 'schema' | 'mapRecord' | 'limits' | 'signal'> {
+  /** Maximum issues retained; every failure is still counted. */
   readonly maxIssues?: number;
+  /** Copies the schema's own messages into issues. They can quote record values, so they are left out by default. */
+  readonly includeSchemaMessages?: boolean;
 }
 
 export interface ValidationIssue {
-  readonly code: 'MAP_ERROR';
+  readonly code: 'SCHEMA_ERROR' | 'MAP_ERROR';
   readonly recordIndex: number;
   /** One-based line where the record starts, when the reader reports it. */
   readonly line?: number;
-  /** Sanitized library message; application exception messages and causes are excluded. */
+  /** Keys and array indexes from the record to the invalid value, when the schema reports them. */
+  readonly path?: readonly (string | number)[];
+  /** Sanitized library message, unless includeSchemaMessages copies the schema's message. */
   readonly message: string;
 }
 
