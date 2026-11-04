@@ -72,10 +72,11 @@ npm install /absolute/path/to/altitud-studio-importkit-0.3.0.tgz
 ## Use in your backend
 
 ```ts
-import { csvReader, importFile } from '@altitud-studio/importkit';
+import { csvReader, fileSource, importFile } from '@altitud-studio/importkit';
 
 const result = await importFile({
-  source: { path: './orders.csv', reader: csvReader() },
+  source: fileSource('./orders.csv'),
+  reader: csvReader(),
   importId: 'orders-2026-11',
   transformVersion: 'orders-v1',
   checkpointPath: './orders.checkpoint.json',
@@ -107,13 +108,14 @@ The result contains `processedRecords` (the total source record count, including
 
 ## Validate before importing
 
-`validateFile` accepts `source`, `importId`, `transformVersion`, `mapRecord`, optional `limits` and `signal`, and optional `maxIssues`. It has no destination or checkpoint option. It awaits each mapping callback and discards the transformed value.
+`validateFile` accepts `source`, `reader`, `importId`, `transformVersion`, `mapRecord`, optional `limits` and `signal`, and optional `maxIssues`. It has no destination or checkpoint option. It awaits each mapping callback and discards the transformed value.
 
 ```ts
-import { csvReader, importFile, validateFile } from '@altitud-studio/importkit';
+import { csvReader, fileSource, importFile, validateFile } from '@altitud-studio/importkit';
 
 const file = {
-  source: { path: './orders.csv', reader: csvReader() },
+  source: fileSource('./orders.csv'),
+  reader: csvReader(),
   importId: 'orders-2026-11',
   transformVersion: 'orders-v1',
   mapRecord(input: unknown) {
@@ -213,7 +215,8 @@ Without the two byte-budget options, imports retain their existing count-only be
 
 ```ts
 await importFile({
-  source: { path: './orders.csv', reader: csvReader() },
+  source: fileSource('./orders.csv'),
+  reader: csvReader(),
   importId: 'orders-2026-11',
   transformVersion: 'encoded-orders-v1',
   checkpointPath: './orders.checkpoint.json',
@@ -246,7 +249,7 @@ Byte accounting changes batch grouping, not record IDs or the checkpoint schema.
 ### CSV
 
 ```ts
-source: { path: './orders.csv', reader: csvReader({ delimiter: ';' }) }
+reader: csvReader({ delimiter: ';' })
 ```
 
 CSV uses the maintained [`csv-parse`](https://csv.js.org/parse/) parser. The first row supplies headers. Values remain strings; the application handles conversion and validation. Quoted fields, multiline fields, UTF-8, BOM, and CRLF are supported. Empty, duplicate, or unsafe headers and inconsistent column counts are rejected. Returned records use a null prototype.
@@ -256,7 +259,7 @@ CSV uses the maintained [`csv-parse`](https://csv.js.org/parse/) parser. The fir
 ```ts
 import { jsonlReader } from '@altitud-studio/importkit';
 
-source: { path: './events.jsonl', reader: jsonlReader() }
+reader: jsonlReader()
 ```
 
 Each line is one JSON value. UTF-8, an initial BOM, CRLF, and a final line without a newline are supported. Blank lines, malformed JSON, and invalid UTF-8 are rejected. This is JSON Lines, not a reader for a single large JSON array.

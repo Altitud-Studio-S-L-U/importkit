@@ -233,7 +233,7 @@ async function runWorker(config) {
   const { options, manifest, phase, checkpointPath } = config;
   const cgroupBefore = await readCgroup();
   if (options.requireCgroup && !cgroupIsEnforced(cgroupBefore, options)) throw new Error('Required finite cgroup memory.max <= RSS budget and memory.swap.max=0 are not verified.');
-  const { importFile, validateFile, csvReader, jsonlReader } = await import('../dist/index.js');
+  const { importFile, validateFile, csvReader, fileSource, jsonlReader } = await import('../dist/index.js');
   const reader = options.format === 'csv' ? csvReader() : jsonlReader();
   const verified = createVerifier(manifest);
   const memory = sampler(manifest.records, options.sampleMs);
@@ -260,7 +260,7 @@ async function runWorker(config) {
     return value;
   };
   const common = {
-    source: { path: manifest.path, reader }, importId: 'large-files-benchmark-v1', transformVersion: 'canonical-tsv-v1',
+    source: fileSource(manifest.path), reader, importId: 'large-files-benchmark-v1', transformVersion: 'canonical-tsv-v1',
     mapRecord, limits: { maxSourceBytes: manifest.actualBytes, maxRecordBytes: Math.max(manifest.rowBytes, manifest.headerBytes), maxRecords: options.maxRecords },
   };
   const cpuBefore = process.cpuUsage();

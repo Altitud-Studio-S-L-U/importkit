@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ImportOptions } from './types.js';
 
-type RecordIdentity = Pick<ImportOptions<unknown>, 'source' | 'importId' | 'transformVersion'>;
+type RecordIdentity = Pick<ImportOptions<unknown>, 'reader' | 'importId' | 'transformVersion'>;
 
 /**
  * Destinations deduplicate replayed records by this ID. Changing its inputs or their encoding would make every
@@ -9,6 +9,6 @@ type RecordIdentity = Pick<ImportOptions<unknown>, 'source' | 'importId' | 'tran
  */
 export function recordId(options: RecordIdentity, sourceHash: string, index: number): string {
   return createHash('sha256').update(JSON.stringify([
-    options.importId, sourceHash, options.source.reader.id, options.transformVersion, index,
+    options.importId, sourceHash, options.reader.id, options.transformVersion, index,
   ])).digest('hex');
 }

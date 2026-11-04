@@ -4,7 +4,15 @@ import type { BigIntStats } from 'node:fs';
 import { open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { checkAbort, ImportKitError } from './errors.js';
-import type { ImportLimits } from './types.js';
+import type { FileSource, ImportLimits } from './types.js';
+
+/** Selects a local file as the source of an import or a validation. */
+export function fileSource(path: string): FileSource {
+  if (typeof path !== 'string' || path.length === 0 || path.includes('\0')) {
+    throw new ImportKitError('INVALID_OPTIONS', 'A source path must be a nonempty filesystem path.');
+  }
+  return Object.freeze({ path });
+}
 
 export interface OpenSource {
   readonly handle: FileHandle;

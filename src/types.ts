@@ -25,8 +25,14 @@ export interface RecordContext {
   readonly index: number;
 }
 
+/** A local file, created with `fileSource()`. It must stay unchanged while a run reads it. */
+export interface FileSource {
+  readonly path: string;
+}
+
 export interface ImportOptions<T> {
-  readonly source: { readonly path: string; readonly reader: RecordReader };
+  readonly source: FileSource;
+  readonly reader: RecordReader;
   readonly importId: string;
   /** Change when mapping, validation, or destination semantics change. */
   readonly transformVersion: string;
@@ -51,7 +57,7 @@ export interface ImportResult {
   readonly sourceHash: string;
 }
 
-export interface ValidationOptions<T> extends Pick<ImportOptions<T>, 'source' | 'importId' | 'transformVersion' | 'mapRecord' | 'limits' | 'signal'> {
+export interface ValidationOptions<T> extends Pick<ImportOptions<T>, 'source' | 'reader' | 'importId' | 'transformVersion' | 'mapRecord' | 'limits' | 'signal'> {
   /** Maximum mapping issues retained; all mapping failures are still counted. */
   readonly maxIssues?: number;
 }

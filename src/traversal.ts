@@ -5,7 +5,7 @@ import { sourceBytes } from './file-source.js';
 import { recordId } from './record-id.js';
 import type { ImportLimits, ImportOptions } from './types.js';
 
-type TraversalOptions = Pick<ImportOptions<unknown>, 'source' | 'importId' | 'transformVersion' | 'signal'>;
+type TraversalOptions = Pick<ImportOptions<unknown>, 'reader' | 'importId' | 'transformVersion' | 'signal'>;
 
 export interface RecordTraversal {
   /** Records from the reader, in source order. The bytes the reader consumes feed `parsedHash()`. */
@@ -35,7 +35,7 @@ export function traverseRecords(handle: FileHandle, options: TraversalOptions, l
   }
 
   return {
-    inputs: () => options.source.reader.read(verifiedBytes(), limits),
+    inputs: () => options.reader.read(verifiedBytes(), limits),
     visit() {
       checkAbort(options.signal);
       count++;

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { importFile, csvReader, jsonlReader } from '../dist/index.js';
+import { importFile, csvReader, fileSource, jsonlReader } from '../dist/index.js';
 
 async function fixture(t, content = '{"id":1}\n{"id":2}\n{"id":3}\n') {
   const directory = await mkdtemp(join(tmpdir(), 'importkit-engine-'));
@@ -14,7 +14,8 @@ async function fixture(t, content = '{"id":1}\n{"id":2}\n{"id":3}\n') {
   await writeFile(sourcePath, content);
   const batches = [];
   const options = {
-    source: { path: sourcePath, reader: jsonlReader() },
+    source: fileSource(sourcePath),
+    reader: jsonlReader(),
     importId: 'test-import',
     transformVersion: 'v1',
     checkpointPath,
@@ -59,7 +60,7 @@ test('CSV checkpoint ordinals count parsed records rather than physical lines', 
   let shouldFail = true;
   const settings = {
     ...options,
-    source: { ...options.source, reader: csvReader() },
+    reader: csvReader(),
     batchSize: 1,
     commitBatch: async (records) => {
       if (records[0].index === 2 && shouldFail) throw new Error('Destination unavailable.');
@@ -155,9 +156,10 @@ test('a killed importer leaves a lock and replays durable uncheckpointed records
   const moduleUrl = new URL('../dist/index.js', import.meta.url).href;
   await writeFile(childPath, `
     import { open } from 'node:fs/promises';
-    import { importFile, jsonlReader } from ${JSON.stringify(moduleUrl)};
+    import { fileSource, importFile, jsonlReader } from ${JSON.stringify(moduleUrl)};
     await importFile({
-      source: { path: ${JSON.stringify(sourcePath)}, reader: jsonlReader() },
+      source: fileSource(${JSON.stringify(sourcePath)}),
+      reader: jsonlReader(),
       importId: ${JSON.stringify(options.importId)},
       transformVersion: ${JSON.stringify(options.transformVersion)},
       checkpointPath: ${JSON.stringify(checkpointPath)},
@@ -220,7 +222,7 @@ test('import, transformation, and reader identities are part of the checkpoint c
   const changed = [
     { importId: 'other-import' },
     { transformVersion: 'v2' },
-    { source: { ...options.source, reader: { ...options.source.reader, id: 'other-reader:v1' } } },
+    { reader: { ...options.reader, id: 'other-reader:v1' } },
   ];
   for (const update of changed) {
     await assert.rejects(importFile({
@@ -281,7 +283,8 @@ test('abort before starting invokes no reader, mapping, or destination callbacks
   await assert.rejects(importFile({
     ...options,
     signal: controller.signal,
-    source: { path: join(directory, 'missing'), reader: { id: 'never:v1', read: () => assert.fail('An aborted import must not open a reader.') } },
+    source: fileSource(join(directory, 'missing')),
+    reader: { id: 'never:v1', read: () => assert.fail('An aborted import must not open a reader.') },
     mapRecord: () => assert.fail('An aborted import must not map.'),
     commitBatch: async () => assert.fail('An aborted import must not write.'),
   }), { code: 'ABORTED' });
@@ -326,7 +329,7 @@ test('missing and nonregular input return source errors', async (t) => {
   const folder = join(directory, 'folder');
   await mkdir(folder);
   for (const path of [join(directory, 'missing'), folder]) {
-    await assert.rejects(importFile({ ...options, source: { ...options.source, path } }), { code: 'SOURCE_ERROR' });
+    await assert.rejects(importFile({ ...options, source: fileSource(path) }), { code: 'SOURCE_ERROR' });
   }
 });
 
@@ -368,7 +371,7 @@ test('custom readers integrate with the same batching contract and backpressure'
   };
   const importing = importFile({
     ...options,
-    source: { ...options.source, reader },
+    reader,
     limits: { maxRecordBytes: 64 },
     batchSize: 1,
     commitBatch: async (records) => {
@@ -406,4 +409,18 @@ test('invalid configuration is rejected before reading input', async (t) => {
   for (const update of [{ batchSize: 0 }, { batchSize: 10_001 }, { importId: '' }, { transformVersion: '' }, { limits: { maxRecords: 0 } }, { signal: {} }]) {
     await assert.rejects(importFile({ ...options, ...update }), { code: 'INVALID_OPTIONS' });
   }
+});
+
+test('the 0.3 source shape and invalid file sources are rejected with guidance', async (t) => {
+  const { options, sourcePath } = await fixture(t);
+  const { reader, ...withoutReader } = options;
+  await assert.rejects(importFile({ ...withoutReader, source: { path: sourcePath, reader } }), {
+    code: 'INVALID_OPTIONS',
+    message: /\{ source: fileSource\(path\), reader: csvReader\(\) \}/u,
+  });
+  await assert.rejects(importFile({ ...options, source: undefined }), { code: 'INVALID_OPTIONS' });
+  for (const path of ['', 'orders\0.csv', 42, undefined]) {
+    assert.throws(() => fileSource(path), { code: 'INVALID_OPTIONS' });
+  }
+  assert.ok(Object.isFrozen(fileSource(sourcePath)));
 });

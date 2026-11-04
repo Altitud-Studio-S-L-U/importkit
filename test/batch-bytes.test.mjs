@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { importFile, jsonlReader } from '../dist/index.js';
+import { fileSource, importFile, jsonlReader } from '../dist/index.js';
 
 async function fixture(t, values = ['123456', 'abc', 'de']) {
   const directory = await mkdtemp(join(tmpdir(), 'importkit-batch-bytes-'));
@@ -14,7 +14,8 @@ async function fixture(t, values = ['123456', 'abc', 'de']) {
   await writeFile(sourcePath, values.map((value) => JSON.stringify(value)).join('\n'));
   const batches = [];
   const options = {
-    source: { path: sourcePath, reader: jsonlReader() },
+    source: fileSource(sourcePath),
+    reader: jsonlReader(),
     importId: 'synthetic-byte-batches',
     transformVersion: 'strings-v1',
     checkpointPath,
@@ -104,7 +105,7 @@ test('measurements occur once per new transformed value with its stable context'
 test('byte options must be paired and valid before any source or checkpoint is opened', async (t) => {
   const { options, directory } = await fixture(t);
   const before = (await readdir(directory)).sort();
-  const base = { ...options, source: { ...options.source, path: join(directory, 'missing') } };
+  const base = { ...options, source: fileSource(join(directory, 'missing')) };
   for (const update of [
     { maxBatchBytes: undefined },
     { measureRecordBytes: undefined },
@@ -153,9 +154,10 @@ test('a rejected Promise measurement produces only the controlled error in a str
   const moduleUrl = new URL('../dist/index.js', import.meta.url).href;
   const script = `
     import assert from 'node:assert/strict';
-    import { importFile, jsonlReader } from ${JSON.stringify(moduleUrl)};
+    import { fileSource, importFile, jsonlReader } from ${JSON.stringify(moduleUrl)};
     await assert.rejects(importFile({
-      source: { path: ${JSON.stringify(sourcePath)}, reader: jsonlReader() },
+      source: fileSource(${JSON.stringify(sourcePath)}),
+      reader: jsonlReader(),
       importId: ${JSON.stringify(options.importId)},
       transformVersion: ${JSON.stringify(options.transformVersion)},
       checkpointPath: ${JSON.stringify(checkpointPath)},

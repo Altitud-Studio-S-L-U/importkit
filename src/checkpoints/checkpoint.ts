@@ -11,7 +11,7 @@ export interface Checkpoint {
   readonly completed: boolean;
 }
 
-type CheckpointIdentity = Pick<ImportOptions<unknown>, 'source' | 'importId' | 'transformVersion'>;
+type CheckpointIdentity = Pick<ImportOptions<unknown>, 'reader' | 'importId' | 'transformVersion'>;
 
 export const maxCheckpointBytes = 16_384;
 const checkpointKeys = [
@@ -53,14 +53,14 @@ export function validateCheckpoint(value: unknown): Checkpoint {
 export function initialCheckpoint(options: CheckpointIdentity, sourceHash: string): Checkpoint {
   return {
     version: 1, importId: options.importId, transformVersion: options.transformVersion,
-    readerId: options.source.reader.id, sourceHash, processedRecords: 0, completed: false,
+    readerId: options.reader.id, sourceHash, processedRecords: 0, completed: false,
   };
 }
 
 /** Rejects progress recorded for other content or import semantics, or beyond the current record limit. */
 export function assertResumable(checkpoint: Checkpoint, options: CheckpointIdentity, sourceHash: string, limits: ImportLimits): void {
   if (checkpoint.importId !== options.importId || checkpoint.transformVersion !== options.transformVersion
-    || checkpoint.readerId !== options.source.reader.id || checkpoint.sourceHash !== sourceHash) {
+    || checkpoint.readerId !== options.reader.id || checkpoint.sourceHash !== sourceHash) {
     throw new ImportKitError('CHECKPOINT_MISMATCH', 'The checkpoint belongs to different source content or import semantics.');
   }
   if (checkpoint.processedRecords > limits.maxRecords) {
