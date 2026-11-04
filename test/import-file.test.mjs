@@ -474,3 +474,11 @@ test('a reader that yields bare values instead of { value } records is rejected 
     assert.deepEqual(batches, []);
   }
 });
+
+test('an import that stops early on a CSV file releases its checkpoint lock', { timeout: 10_000 }, async (t) => {
+  const rows = ['id', ...Array.from({ length: 100 }, (_, index) => String(index))].join('\n');
+  const { options } = await fixture(t, rows);
+  const settings = { ...options, reader: csvReader() };
+  await assert.rejects(importFile({ ...settings, mapRecord: () => { throw new Error('Rejected.'); } }), { code: 'MAP_ERROR' });
+  assert.equal((await importFile(settings)).processedRecords, 100);
+});

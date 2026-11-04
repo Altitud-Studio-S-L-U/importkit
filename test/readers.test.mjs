@@ -140,3 +140,14 @@ test('reader errors report the line where the failing record starts', async () =
   await assert.rejects(read(jsonlReader(), '1\n\n'), { code: 'PARSE_ERROR', line: 2 });
   await assert.rejects(read(jsonlReader(), '1\n"long"\n', { maxRecordBytes: 4 }), { code: 'LIMIT_EXCEEDED', line: 2 });
 });
+
+test('CSV reader settles when its consumer stops while parsed rows are buffered', { timeout: 10_000 }, async () => {
+  const rows = (header) => [header, ...Array.from({ length: 40 }, (_, index) => `${index},${index}`)].join('\n');
+  await assert.rejects(read(csvReader(), rows('id,id'), { size: 65_536 }), { code: 'PARSE_ERROR', line: 1 });
+  let seen = 0;
+  for await (const _record of csvReader().read(pieces(rows('id,name'), 65_536), { maxRecordBytes: 64 })) {
+    seen++;
+    break;
+  }
+  assert.equal(seen, 1);
+});
