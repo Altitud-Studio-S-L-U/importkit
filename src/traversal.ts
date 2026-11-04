@@ -16,6 +16,8 @@ export interface RecordTraversal {
   context(index: number, record: ParsedRecord): RecordContext;
   /** Records parsed so far. */
   count(): number;
+  /** Source bytes given to the reader so far. */
+  bytesRead(): number;
   /** SHA-256 of the bytes given to the reader. Call it once, after the traversal ends. */
   parsedHash(): string;
 }
@@ -35,10 +37,12 @@ function isParsedRecord(record: unknown): record is ParsedRecord {
 export function traverseRecords(handle: FileHandle, options: TraversalOptions, limits: ImportLimits, sourceHash: string): RecordTraversal {
   const hash = createHash('sha256');
   let count = 0;
+  let bytesRead = 0;
 
   async function* verifiedBytes(): AsyncIterable<Uint8Array> {
     for await (const chunk of sourceBytes(handle, limits.maxSourceBytes, options.signal)) {
       hash.update(chunk);
+      bytesRead += chunk.byteLength;
       yield chunk;
     }
   }
@@ -59,6 +63,7 @@ export function traverseRecords(handle: FileHandle, options: TraversalOptions, l
       return record.line === undefined ? { id, index } : { id, index, line: record.line };
     },
     count: () => count,
+    bytesRead: () => bytesRead,
     parsedHash: () => hash.digest('hex'),
   };
 }

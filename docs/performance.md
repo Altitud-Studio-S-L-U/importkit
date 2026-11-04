@@ -10,6 +10,7 @@ This page states what an import costs in time, reads and memory with the include
 | `R` | Parsed records. |
 | `B` | Nonempty batches committed in a run. |
 | `b` | The `batchSize` record limit. |
+| `c` | The `concurrency` limit on batches in flight. |
 | `K` | The optional `maxBatchBytes` limit. |
 | `S` | The largest serialized record, bounded by `maxRecordBytes`. |
 | `H` | CSV columns. Header bytes are also bounded by `S`. |
@@ -32,7 +33,7 @@ These bounds assume decoding linear in the input. Callbacks, database work and f
 
 ## Space
 
-ImportKit keeps the pending batch, the reader's state and at most `I` validation issues. It never accumulates the `R` records of the file. When mapped values are about as large as their measured size, the extra memory grows as `O(S + H + b + I)` plus the batch's values.
+ImportKit keeps the pending batch, the reader's state and at most `I` validation issues. It never accumulates the `R` records of the file. When mapped values are about as large as their measured size, the extra memory grows as `O(S + H + c·b + I)` plus the values of the batches held, where `c` is `concurrency`: up to `c` batches are in flight at once.
 
 - CSV can take more memory than its byte size suggests: many short or empty fields still allocate one string and one object entry per column.
 - Deciding whether the next record fits can hold the pending batch and one more record of up to `K` measured bytes, so measured payload can approach `2K`.

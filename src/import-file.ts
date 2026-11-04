@@ -4,6 +4,7 @@ import { BatchBuilder } from './batch-builder.js';
 import { assertResumable, guardCheckpointStore, initialCheckpoint } from './checkpoints/checkpoint.js';
 import type { GuardedCheckpointStore } from './checkpoints/checkpoint.js';
 import { FileCheckpointStore } from './checkpoints/file-checkpoint.js';
+import { CommitQueue } from './commit-queue.js';
 import { checkAbort, ImportKitError } from './errors.js';
 import { assertSourceState, closeSource, fingerprint, openSource } from './file-source.js';
 import type { OpenSource } from './file-source.js';
@@ -11,7 +12,7 @@ import { assertImportOptions } from './options.js';
 import type { ImportSettings } from './options.js';
 import { RejectedRecord } from './transform.js';
 import { traverseRecords } from './traversal.js';
-import type { Checkpoint, CommitContext, ImportOptions, ImportResult, RecordContext } from './types.js';
+import type { Checkpoint, ImportOptions, ImportProgress, ImportResult, RecordContext } from './types.js';
 
 function measureBytes<T>(measure: (value: T, context: RecordContext) => number, value: T, context: RecordContext, signal: AbortSignal | undefined): number {
   let bytes: unknown;
@@ -33,7 +34,7 @@ function measureBytes<T>(measure: (value: T, context: RecordContext) => number, 
   return bytes;
 }
 
-/** Imports an immutable local file with sequential, at-least-once destination batches. */
+/** Imports an immutable local file in at-least-once destination batches, saving progress in source order. */
 export async function importFile<I = unknown, T = I>(options: ImportOptions<I, T>): Promise<ImportResult> {
   const settings = assertImportOptions(options);
   checkAbort(options.signal);
@@ -55,9 +56,21 @@ export async function importFile<I = unknown, T = I>(options: ImportOptions<I, T
   }
 }
 
+function progressReporter(onProgress: ImportOptions['onProgress'], signal: AbortSignal | undefined): ((progress: ImportProgress) => Promise<void>) | undefined {
+  if (onProgress === undefined) return undefined;
+  return async (progress) => {
+    try {
+      await onProgress(Object.freeze(progress));
+    } catch (error) {
+      checkAbort(signal);
+      throw new ImportKitError('PROGRESS_ERROR', 'The progress callback failed.', { cause: error });
+    }
+  };
+}
+
 async function importOpenSource<I, T>(
   options: ImportOptions<I, T>,
-  { limits, transform, batchSize, byteBudget }: ImportSettings<T>,
+  { limits, transform, batchSize, byteBudget, concurrency }: ImportSettings<T>,
   checkpoints: GuardedCheckpointStore,
   { handle, state }: OpenSource,
 ): Promise<ImportResult> {
@@ -65,71 +78,87 @@ async function importOpenSource<I, T>(
   await assertSourceState(handle, state);
   const saved = await checkpoints.load();
   if (saved) assertResumable(saved, options, sourceHash, limits);
-  let checkpoint: Checkpoint = saved ?? initialCheckpoint(options, sourceHash);
-  if (!saved) await checkpoints.save(checkpoint);
-  const resumedFrom = checkpoint.processedRecords;
+  const start: Checkpoint = saved ?? initialCheckpoint(options, sourceHash);
+  if (!saved) await checkpoints.save(start);
+  const resumedFrom = start.processedRecords;
   const traversal = traverseRecords(handle, options, limits, sourceHash);
   const batch = new BatchBuilder<T>(batchSize, byteBudget?.maxBatchBytes);
-  let committedBatches = 0;
-
-  const commit = async (completed: boolean): Promise<void> => {
-    checkAbort(options.signal);
-    // A byte-triggered flush can have one mapped record waiting outside this
-    // batch. Only its included prefix is safe to checkpoint after persistence.
-    const records = batch.records();
-    const next: Checkpoint = Object.freeze({ ...checkpoint, processedRecords: records.at(-1)?.index ?? traversal.count(), completed });
-    await assertSourceState(handle, state);
-    const first = records[0];
-    if (first !== undefined) {
-      const context: CommitContext = Object.freeze(options.signal === undefined ? { checkpoint: next } : { checkpoint: next, signal: options.signal });
+  const queue = new CommitQueue<T>({
+    concurrency,
+    signal: options.signal,
+    start,
+    totalBytes: Number(state.size),
+    commit: async (records, context) => {
+      await assertSourceState(handle, state);
       try {
         await options.commitBatch(records, context);
       } catch (error) {
         checkAbort(options.signal);
-        throw new ImportKitError('COMMIT_ERROR', 'Destination batch failed; its uncheckpointed records may be replayed.', { cause: error, recordIndex: first.index });
+        throw new ImportKitError('COMMIT_ERROR', 'Destination batch failed; its uncheckpointed records may be replayed.', { cause: error, recordIndex: records[0]?.index });
       }
-    }
-    // Do not cancel between a durable destination commit and its checkpoint.
-    await checkpoints.save(next);
-    checkpoint = next;
-    if (first !== undefined) committedBatches++;
+    },
+    save: (checkpoint) => checkpoints.save(checkpoint),
+    progress: progressReporter(options.onProgress, options.signal),
+  });
+
+  const flush = async (completed: boolean): Promise<void> => {
+    checkAbort(options.signal);
+    // A byte-triggered flush can have one mapped record waiting outside this
+    // batch. Only its included prefix is safe to checkpoint after persistence.
+    const records = batch.records();
     batch.clear();
+    const last = records.at(-1);
+    if (last !== undefined) {
+      const checkpoint: Checkpoint = Object.freeze({ ...start, processedRecords: last.index, completed });
+      await queue.submit(records, { checkpoint, bytesRead: traversal.bytesRead() });
+    }
+    // The queue saves a committed batch's checkpoint before cancellation is observed here.
     checkAbort(options.signal);
   };
 
-  try {
-    for await (const record of traversal.inputs()) {
-      const index = traversal.visit(record);
-      if (index <= resumedFrom) continue;
-      const context = traversal.context(index, record);
-      const value = await transform(record.value, context);
-      if (value instanceof RejectedRecord) throw value.toError(context);
-      checkAbort(options.signal);
-      let bytes = 0;
-      if (byteBudget !== undefined) {
-        bytes = measureBytes(byteBudget.measureRecordBytes, value, context, options.signal);
-        if (bytes > byteBudget.maxBatchBytes) {
-          throw new ImportKitError('LIMIT_EXCEEDED', 'A transformed record exceeds maxBatchBytes.', { recordIndex: index, line: context.line });
+  const deliver = async (): Promise<void> => {
+    try {
+      for await (const record of traversal.inputs()) {
+        const index = traversal.visit(record);
+        if (index <= resumedFrom) continue;
+        const context = traversal.context(index, record);
+        const value = await transform(record.value, context);
+        if (value instanceof RejectedRecord) throw value.toError(context);
+        checkAbort(options.signal);
+        let bytes = 0;
+        if (byteBudget !== undefined) {
+          bytes = measureBytes(byteBudget.measureRecordBytes, value, context, options.signal);
+          if (bytes > byteBudget.maxBatchBytes) {
+            throw new ImportKitError('LIMIT_EXCEEDED', 'A transformed record exceeds maxBatchBytes.', { recordIndex: index, line: context.line });
+          }
+          if (batch.mustCommitBefore(bytes)) await flush(false);
         }
-        if (batch.mustCommitBefore(bytes)) await commit(false);
+        batch.add(Object.freeze({ id: context.id, index, value }), bytes);
+        if (batch.isFull()) await flush(false);
       }
-      batch.add(Object.freeze({ id: context.id, index, value }), bytes);
-      if (batch.isFull()) await commit(false);
+    } catch (error) {
+      // Callbacks, limits, source checks and persistence raise ImportKitError, so any other error came from the reader.
+      if (error instanceof ImportKitError) throw error;
+      checkAbort(options.signal);
+      throw new ImportKitError('PARSE_ERROR', 'The reader failed to produce records.', { cause: error, recordIndex: traversal.count() + 1 });
     }
-  } catch (error) {
-    // Callbacks, limits, source checks and persistence raise ImportKitError, so any other error came from the reader.
-    if (error instanceof ImportKitError) throw error;
+  };
+
+  try {
+    await deliver();
+    if (traversal.parsedHash() !== sourceHash) {
+      throw new ImportKitError('SOURCE_CHANGED', 'The source bytes changed between fingerprinting and parsing.');
+    }
+    await assertSourceState(handle, state);
+    if (traversal.count() < resumedFrom) throw new ImportKitError('CHECKPOINT_MISMATCH', 'Checkpoint progress exceeds the reader output.');
+    // Completed imports are parsed again so smaller limits and reader failures still apply.
+    await flush(true);
+    await queue.complete(traversal.count(), traversal.bytesRead());
     checkAbort(options.signal);
-    throw new ImportKitError('PARSE_ERROR', 'The reader failed to produce records.', { cause: error, recordIndex: traversal.count() + 1 });
+  } catch (error) {
+    // No callback may run once the import settles: wait for batches in flight and save the progress they confirm.
+    await queue.settle();
+    throw error;
   }
-  if (traversal.parsedHash() !== sourceHash) {
-    throw new ImportKitError('SOURCE_CHANGED', 'The source bytes changed between fingerprinting and parsing.');
-  }
-  await assertSourceState(handle, state);
-  const processedRecords = traversal.count();
-  if (processedRecords < resumedFrom) throw new ImportKitError('CHECKPOINT_MISMATCH', 'Checkpoint progress exceeds the reader output.');
-  // Completed imports are parsed again so smaller limits and reader failures still apply.
-  if (!checkpoint.completed || batch.size > 0) await commit(true);
-  else checkAbort(options.signal);
-  return { status: 'completed', resumedFrom, processedRecords, committedBatches, sourceHash };
+  return { status: 'completed', resumedFrom, processedRecords: traversal.count(), committedBatches: queue.committedBatches, sourceHash };
 }

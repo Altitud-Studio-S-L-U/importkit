@@ -8,8 +8,8 @@ This page describes what ImportKit guarantees when a run stops, where checkpoint
 2. Fingerprint the source with SHA-256 before any destination write.
 3. Load the saved checkpoint. Reject it if it describes other content, another reader or another `transformVersion`.
 4. Parse the source from the beginning. Skip the records the checkpoint already confirms, and map the rest.
-5. Group mapped records into batches and pass each batch to `commitBatch`, one at a time, in source order.
-6. Once `commitBatch` resolves, save the checkpoint. The last batch, which may be smaller, is saved as completed.
+5. Group mapped records into batches and pass each batch to `commitBatch` in source order, one at a time unless `concurrency` allows more.
+6. Once `commitBatch` has resolved for a batch and for every batch before it, save the checkpoint. The last batch, which may be smaller, is saved as completed.
 
 ```text
 parse → map → commitBatch → save checkpoint → next batch
@@ -33,6 +33,25 @@ ImportKit still calls `save()` after each batch. With a transactional destinatio
 
 The [transactional example](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/examples/transactional.mjs) uses SQLite: it loses the acknowledgment of the first batch on purpose and shows the next run resuming without a replay.
 
+## Commit batches concurrently
+
+With `concurrency` above 1, ImportKit keeps reading and mapping while earlier batches are being committed, and up to `concurrency` calls to `commitBatch` run at the same time. A destination that spends most of each batch waiting, such as a remote database or an HTTP API, then imports several times faster.
+
+- Batches start in source order but can finish in any order. Records within a batch stay in source order.
+- The checkpoint advances only over batches whose predecessors are all confirmed. If batch 3 is confirmed before batch 2, progress stays at the end of batch 1 until batch 2 is confirmed.
+- When a batch fails or the run is cancelled, no new batch starts. ImportKit waits for the batches in flight, saves the progress they confirm and then rejects with the first error. A batch confirmed after an earlier one failed is delivered again on the next run.
+- Each batch in flight holds its records in memory, so a run can hold up to `concurrency` batches at once.
+
+For a transactional destination, the `checkpoint` in `CommitContext` includes its batch only when every earlier batch is already confirmed, and otherwise holds the progress confirmed so far. Batches can then commit their checkpoints out of order, so write it with an upsert that never moves progress back:
+
+```sql
+INSERT INTO import_checkpoints (import_id, checkpoint) VALUES ($1, $2)
+ON CONFLICT (import_id) DO UPDATE SET checkpoint = EXCLUDED.checkpoint
+WHERE (EXCLUDED.checkpoint->>'processedRecords')::bigint >= (import_checkpoints.checkpoint->>'processedRecords')::bigint
+```
+
+Keep `concurrency` at 1 when the destination needs batches in order, for example when later records update rows that earlier ones created.
+
 ## Checkpoint stores
 
 A checkpoint store keeps the checkpoint of one logical import.
@@ -45,7 +64,7 @@ interface CheckpointStore {
 }
 ```
 
-During a run ImportKit calls `lock()` once, if it exists, and `load()` once. It calls `save()` when an import starts, after every committed batch, and once more to mark the import completed if its last batch was already saved. Finally it calls the release function returned by `lock()`, whether the run succeeded or failed.
+During a run ImportKit calls `lock()` once, if it exists, and `load()` once. It calls `save()` when an import starts, whenever confirmed progress advances, and once more to mark the import completed if its last batch was already saved. Saves never overlap and never move progress back. Finally it calls the release function returned by `lock()`, whether the run succeeded or failed.
 
 ImportKit validates whatever `load()` returns, exactly as it validates a checkpoint file: an object with other fields, wrong types or an unknown `version` fails with `CHECKPOINT_ERROR`, and a checkpoint for other content, another reader or another `transformVersion` fails with `CHECKPOINT_MISMATCH`. A store's own failures become `CHECKPOINT_ERROR`, with the original error as `cause`. A store can also throw an `ImportKitError` itself, for example `IMPORT_LOCKED`, and it reaches the caller unchanged.
 
