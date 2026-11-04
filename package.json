@@ -7,8 +7,12 @@
   "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "author": "Altitud Studio SLU (https://altitudstudio.ad)",
   "engines": { "node": ">=24" },
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./package.json": "./package.json"
+  },
   "types": "./dist/index.d.ts",
+  "sideEffects": false,
   "files": ["dist", "README.md", "LICENSE"],
   "repository": { "type": "git", "url": "git+https://github.com/Altitud-Studio-S-L-U/importkit.git" },
   "bugs": { "url": "https://github.com/Altitud-Studio-S-L-U/importkit/issues" },
