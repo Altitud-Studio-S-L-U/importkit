@@ -76,6 +76,10 @@ function openResponse(response: Response, maxBytes: number): OpenedResponse {
   }
   if (etag.startsWith('W/')) throw responseError('The response must carry a strong ETag: a weak one can stay the same when the content changes.');
   if (etag.length > 256) throw responseError('The response ETag exceeds 256 characters.');
+  // RFC 9110 section 8.8.3: etagc excludes DQUOTE and spaces but permits obs-text.
+  if (!/^"[\x21\x23-\x7E\x80-\xFF]*"$/u.test(etag)) {
+    throw responseError('The response must carry a syntactically valid strong ETag.');
+  }
   const length = headers.get('content-length');
   if (length === null || !/^\d{1,16}$/u.test(length) || !Number.isSafeInteger(Number(length))) {
     throw responseError('The response must declare its Content-Length.');
