@@ -167,3 +167,71 @@ test('invalid URLs and headers are rejected when the source is created, and the 
   assert.deepEqual(Object.keys(source), ['open']);
   assert.doesNotMatch(inspect(source, { depth: 10, showHidden: true }), /private-signature|synthetic-secret-token/u);
 });
+
+
+// RFC 9110 section 8.8.3: DQUOTE surrounds etagc; backslash does not escape quotes.
+test('malformed ETags fail before record processing and cancel the pending body', async (t) => {
+  const invalid = ['"a\tb"', '"a\u007fb"',"unquoted", "\"a b\"", "\"a\",\"b\"", "\"a\"b\"", "\"a\\\"b\"", "W/\"weak\"", "\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\""];
+  for (const etag of invalid) {
+    await t.test(JSON.stringify(etag), async (t) => {
+      let cancelled = false;
+      const calls = [];
+      let endBody;
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(content));
+          endBody = setTimeout(() => controller.close(), 250);
+        },
+        cancel() { clearTimeout(endBody); cancelled = true; },
+      });
+      t.after(() => clearTimeout(endBody));
+      t.mock.method(globalThis, 'fetch', async () => new Response(body, {
+        status: 200, headers: { etag, 'content-length': String(Buffer.byteLength(content)) },
+      }));
+      const target = 'https://example.test/orders?signature=private-signature';
+      await assert.rejects(importFile(options(httpSource(target, { headers: { authorization: secret } }), {
+        mapRecord: (input) => { calls.push('mapRecord'); return input; },
+        commitBatch: async () => { calls.push('commitBatch'); },
+        checkpointStore: { load: async () => undefined, save: async () => { calls.push('save'); } },
+      })), (error) => {
+        assert.equal(error.code, 'SOURCE_ERROR');
+        const shown = inspect(error, { depth: 10 });
+        assert.equal(shown.includes(etag), false);
+        assert.equal(shown.includes(target), false);
+        assert.doesNotMatch(shown, /private-signature|synthetic-secret-token|authorization/iu);
+        return true;
+      });
+      assert.deepEqual(calls, []);
+      assert.equal(cancelled, true);
+    });
+  }
+});
+
+test('strong ETags preserve their literal identity including obs-text and the length boundary', async (t) => {
+  const valid = ['"\u0080"', '"\u00e9"', '"\u00fe"', '"\u00ff"',"\"v1\"", "\"\"", "\"a,b\"", "\"a\\b\"", "\"ÿ\"", "\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\""];
+  for (const etag of valid) {
+    await t.test(JSON.stringify(etag), async (t) => {
+      t.mock.method(globalThis, 'fetch', async () => new Response(content, {
+        status: 200, headers: { etag, 'content-length': String(Buffer.byteLength(content)) },
+      }));
+      const store = memoryStore();
+      const source = httpSource('https://example.test/orders');
+      const delivered = [];
+      const settings = options(source, {
+        checkpointStore: store,
+        commitBatch: async (records) => {
+          if (records[0].index === 2) throw new Error('Destination unavailable.');
+          delivered.push(...records.map(({ id }) => id));
+        },
+      });
+      await assert.rejects(importFile(settings), { code: 'COMMIT_ERROR' });
+      assert.equal(store.current().sourceIdentity, 'etag:' + etag);
+      const result = await importFile({ ...settings, commitBatch: async (records) => { delivered.push(...records.map(({ id }) => id)); } });
+      assert.equal(result.resumedFrom, 1);
+      const validated = [];
+      const report = await validateFile(options(source, { mapRecord: (input, { id }) => { validated.push(id); return input; } }));
+      assert.equal(report.status, 'valid');
+      assert.deepEqual(validated, delivered);
+    });
+  }
+});
