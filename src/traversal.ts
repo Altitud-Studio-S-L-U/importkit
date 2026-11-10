@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { checkAbort, ImportKitError } from './errors.js';
-import { recordId } from './record-id.js';
+import { recordIds } from './record-id.js';
 import type { GuardedSource } from './sources/source.js';
 import type { ImportLimits, ImportOptions, ParsedRecord, RecordContext } from './types.js';
 
@@ -40,6 +40,7 @@ function isParsedRecord(record: unknown): record is ParsedRecord {
  */
 export function traverseRecords(source: GuardedSource, options: TraversalOptions, limits: ImportLimits): RecordTraversal {
   const hash = createHash('sha256');
+  const idOf = recordIds(options, source.identity);
   const chunks = source.bytes()[Symbol.asyncIterator]();
   let ended = false;
   let count = 0;
@@ -73,7 +74,7 @@ export function traverseRecords(source: GuardedSource, options: TraversalOptions
       return count;
     },
     context(index, record) {
-      const id = recordId(options, source.identity, index);
+      const id = idOf(index);
       return record.line === undefined ? { id, index } : { id, index, line: record.line };
     },
     count: () => count,
