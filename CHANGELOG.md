@@ -4,6 +4,15 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Changed
+
+- Record IDs are hashed from a precomputed prefix with `crypto.hash`, without serializing the constant identity for every record. The IDs are byte-for-byte the same. A 200 MB CSV import of 2,583,975 records with a no-op destination took 16.5–17.2 s instead of 18.4–18.6 s (three runs each, Node.js 24.11.1, Windows x64).
+
+### Fixed
+
+- `httpSource` rejects an ETag that is not a syntactically valid strong entity tag (RFC 9110, section 8.8.3) before any record is processed.
+- Checkpoint files are inspected through the open file handle, so a path replaced by a link between the check and the read is rejected on platforms without `O_NOFOLLOW`.
+
 ## [1.0.0] - 2026-11-04
 
 ### Breaking changes
