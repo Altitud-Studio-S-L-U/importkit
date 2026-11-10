@@ -3,7 +3,6 @@
 Resumable, validated CSV and JSON Lines imports for Node.js backends.
 
 [![npm version](https://img.shields.io/npm/v/@altitud-studio/importkit)](https://www.npmjs.com/package/@altitud-studio/importkit)
-[![npm downloads](https://img.shields.io/npm/dm/@altitud-studio/importkit)](https://www.npmjs.com/package/@altitud-studio/importkit)
 [![CI](https://github.com/Altitud-Studio-S-L-U/importkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Altitud-Studio-S-L-U/importkit/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Altitud-Studio-S-L-U/importkit/actions/workflows/codeql.yml/badge.svg)](https://github.com/Altitud-Studio-S-L-U/importkit/actions/workflows/codeql.yml)
 [![license](https://img.shields.io/npm/l/@altitud-studio/importkit)](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/LICENSE)
@@ -12,6 +11,27 @@ Resumable, validated CSV and JSON Lines imports for Node.js backends.
 ImportKit imports CSV and JSON Lines files into your backend in bounded batches and records progress after each batch your code confirms. If a run stops halfway, the next run resumes after the last confirmed batch. Each record keeps the same ID across runs, so your destination can skip repeats. Keep progress in the same database transaction as the records, and a resumed run never delivers a committed batch again.
 
 You write two functions: one that validates and converts a record, and one that writes a batch. ImportKit streams the file, enforces size limits, groups records into batches, saves checkpoints and coordinates recovery.
+
+## See recovery in action
+
+The included SQLite demos simulate a lost acknowledgment after a committed write. They use synthetic data and verify the results:
+
+| Checkpoint strategy | Deliveries | Stored records | Replayed records |
+| --- | ---: | ---: | ---: |
+| Separate checkpoint file | 7 | 5 | 2, deduplicated by stable ID |
+| Checkpoint in the write transaction | 5 | 5 | 0 |
+
+Run them from a checkout with **Node.js 24+**:
+
+```sh
+git clone https://github.com/Altitud-Studio-S-L-U/importkit.git
+cd importkit
+npm ci
+npm run demo:recovery
+npm run demo:transactional
+```
+
+These are fixture results, not a production benchmark. See [examples](#examples) for validation demos and the SQLite runtime note, or [install](#install) to use ImportKit in your application.
 
 ## Install
 
