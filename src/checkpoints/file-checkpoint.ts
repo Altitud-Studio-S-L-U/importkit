@@ -9,19 +9,29 @@ import { sourceReadFlags } from '../sources/file-source.js';
 import type { Checkpoint, CheckpointStore } from '../types.js';
 import { checkpointError, maxCheckpointBytes, validateCheckpoint } from './checkpoint.js';
 
+function symbolicLinkCheckpoint(): ImportKitError {
+  return checkpointError('Checkpoint metadata must be stored in a regular file, not a symbolic link.');
+}
+
 async function readBoundedRegularFile(path: string, maxBytes: number): Promise<Buffer> {
-  const entry = await lstat(path);
-  if (!entry.isFile() || entry.isSymbolicLink()) {
-    throw checkpointError('Checkpoint metadata must be stored in a regular file, not a symbolic link.');
-  }
-  // O_NOFOLLOW prevents a symlink substitution where the platform supports it.
-  // O_NONBLOCK avoids blocking on a nonregular replacement on POSIX systems.
+  // Open before inspecting, so every check below describes the file that is read rather than whatever
+  // the path named a moment earlier. O_NOFOLLOW refuses a symbolic link where the platform supports it;
+  // O_NONBLOCK keeps a FIFO from blocking the open on POSIX systems.
   const flags = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
-  const handle = await open(path, flags);
+  let handle: FileHandle;
   try {
-    const stat = await handle.stat();
+    handle = await open(path, flags);
+  } catch (error) {
+    if (hasErrorCode(error, 'ELOOP')) throw symbolicLinkCheckpoint();
+    throw error;
+  }
+  try {
+    const stat = await handle.stat({ bigint: true });
     if (!stat.isFile()) throw checkpointError('Checkpoint metadata must be stored in a regular file.');
-    if (stat.size > maxBytes) throw checkpointError('Checkpoint metadata exceeds its size limit.');
+    // Without O_NOFOLLOW (Windows) the open follows a link, so the path itself must still name this file.
+    const entry = await lstat(path, { bigint: true });
+    if (entry.isSymbolicLink() || entry.dev !== stat.dev || entry.ino !== stat.ino) throw symbolicLinkCheckpoint();
+    if (stat.size > BigInt(maxBytes)) throw checkpointError('Checkpoint metadata exceeds its size limit.');
     const buffer = Buffer.alloc(maxBytes + 1);
     let bytes = 0;
     while (bytes < buffer.byteLength) {
