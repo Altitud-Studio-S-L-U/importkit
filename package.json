@@ -1,6 +1,6 @@
 {
   "name": "@altitud-studio/importkit",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Resumable, validated CSV and JSON Lines imports for Node.js backends.",
   "type": "module",
   "license": "MIT",

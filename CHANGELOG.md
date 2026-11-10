@@ -4,6 +4,8 @@ All notable changes to ImportKit are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-10
+
 ### Changed
 
 - Record IDs are hashed from a precomputed prefix with `crypto.hash`, without serializing the constant identity for every record. The IDs are byte-for-byte the same. A 200 MB CSV import of 2,583,975 records with a no-op destination took 16.5–17.2 s instead of 18.4–18.6 s (three runs each, Node.js 24.11.1, Windows x64).
