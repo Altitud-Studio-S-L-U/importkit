@@ -3,6 +3,9 @@
 Resumable, validated CSV and JSON Lines imports for Node.js backends.
 
 [![npm version](https://img.shields.io/npm/v/@altitud-studio/importkit)](https://www.npmjs.com/package/@altitud-studio/importkit)
+[![npm downloads](https://img.shields.io/npm/dm/@altitud-studio/importkit)](https://www.npmjs.com/package/@altitud-studio/importkit)
+[![CI](https://github.com/Altitud-Studio-S-L-U/importkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Altitud-Studio-S-L-U/importkit/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Altitud-Studio-S-L-U/importkit/actions/workflows/codeql.yml/badge.svg)](https://github.com/Altitud-Studio-S-L-U/importkit/actions/workflows/codeql.yml)
 [![license](https://img.shields.io/npm/l/@altitud-studio/importkit)](https://github.com/Altitud-Studio-S-L-U/importkit/blob/main/LICENSE)
 [![node](https://img.shields.io/node/v/@altitud-studio/importkit)](https://nodejs.org/)
 

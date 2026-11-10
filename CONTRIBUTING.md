@@ -14,7 +14,7 @@ npm run demo
 
 `npm run check` type-checks the library, runs the tests and checks the documentation: it type-checks every TypeScript example that imports the package and verifies links to files and headings in this repository.
 
-This repository deliberately has no CI/CD workflows. Run the checks locally and include their actual results in your pull request. Distinguish passed checks, pre-existing failures, and checks you could not run.
+Every pull request runs the same checks, the examples and a package dry run on Linux, macOS and Windows with Node.js 24 and 26, and a CodeQL scan. Run the checks locally first and include their actual results in your pull request. Distinguish passed checks, pre-existing failures, and checks you could not run. Releases are published by the maintainer, not by a workflow.
 
 ## Before opening a pull request
 
